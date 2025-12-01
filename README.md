@@ -1,4 +1,4 @@
-# OpenFOAM Personal Scripts
+# Scripts for easy foaming
 
 A collection of personal utility scripts for working with OpenFOAM more efficiently.
 
