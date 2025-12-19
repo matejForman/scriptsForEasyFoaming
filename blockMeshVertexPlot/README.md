@@ -3,7 +3,6 @@
 Interactive 3D visualization tool for OpenFOAM `blockMeshDict` files. Displays vertex positions with their indices and automatically detects duplicate vertices.
 
 ![Python Version](https://img.shields.io/badge/python-3.6%2B-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Features
 
