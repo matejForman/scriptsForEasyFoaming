@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A tiny CFD game: play with the terms of the momentum equation and watch the flow react.">
+<meta property="og:title" content="foamFun — a birthday case">
+<meta property="og:description" content="Play with the terms of the momentum equation: pressure drop, viscosity, convection, buoyancy and your own body force.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://USERNAME.github.io/REPO/og.png">
+<meta property="og:url" content="https://USERNAME.github.io/REPO/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍂</text></svg>">
+<title>foamFun — a birthday case</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=STIX+Two+Text:ital,wght@0,400;0,600;1,400&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#4a4f66; --bg2:#30334a; --panel:#262939; --panel2:#1d1f2c; --line:#5b6180;
+  --text:#eceef6; --muted:#a4aac4; --cool:#3b4cc0; --coolL:#8db0fe; --warm:#b40426; --warmL:#f49a7b;
+  --warn:#f2c14e; --ok:#8fd6a0;
+  --serif:"STIX Two Text","Cambria Math","Times New Roman",serif;
+  --sans:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;min-height:100%;color:var(--text);font-family:var(--sans);font-size:16px;line-height:1.45;
+  background:linear-gradient(180deg,var(--bg) 0%,var(--bg2) 100%) fixed;background-color:var(--bg2)}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 20px 40px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 22px;margin-bottom:14px}
+h1{font-family:var(--serif);font-weight:400;font-style:italic;font-size:30px;margin:0;letter-spacing:.2px}
+h1 b{font-style:normal;font-weight:600}
+.cases{display:flex;flex-wrap:wrap;gap:6px}
+.cases button{font-family:var(--mono);font-size:13px;color:var(--muted);background:transparent;border:1px solid var(--line);border-radius:3px;padding:4px 9px;cursor:pointer}
+.cases button[aria-current="true"]{color:var(--text);background:var(--panel);border-color:var(--coolL)}
+.cases button .st{color:var(--warn);margin-left:4px}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--warn);outline-offset:2px}
+
+/* the equation */
+.eq{display:grid;grid-template-columns:auto 1fr auto 1fr auto auto 1fr auto 1fr auto 1fr auto 1fr;align-items:stretch;gap:0;
+  background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:10px 8px 12px}
+.op{font-family:var(--serif);font-size:30px;color:var(--muted);align-self:start;padding:6px 3px 0}
+.term{display:flex;flex-direction:column;gap:6px;padding:4px 8px 2px;border-radius:4px;min-width:0}
+.term .sym{font-family:var(--serif);font-size:30px;line-height:1.15;white-space:nowrap;text-align:center}
+.term .sym i{font-style:italic}
+.term.off .sym{color:#6d7390;text-decoration:line-through;text-decoration-thickness:2px}
+.term.locked .sym{color:#8a90ab}
+.bar{height:5px;background:#34384d;border-radius:3px;overflow:hidden}
+.bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--cool),var(--coolL),#ddd,var(--warmL),var(--warm));background-size:100% 100%;transition:width .12s linear}
+.ctl{font-size:13px;color:var(--muted);min-height:44px}
+.ctl label{display:block}
+.ctl .val{color:var(--text);font-family:var(--mono);font-size:12px}
+.ctl input[type=range]{width:100%;accent-color:var(--coolL);margin:2px 0 0}
+.note{font-size:12.5px;color:#868cab;font-style:italic;font-family:var(--serif)}
+.sw{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px}
+.sw input{accent-color:var(--coolL);width:16px;height:16px}
+
+/* stage */
+.stage{position:relative;margin-top:12px;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#1a1c26}
+canvas#view{display:block;width:100%;height:auto;aspect-ratio:2/1;touch-action:none}
+.hud{position:absolute;left:10px;top:8px;right:10px;display:flex;justify-content:space-between;gap:12px;pointer-events:none;font-family:var(--mono);font-size:12px;color:#e6e8f2;text-shadow:0 1px 2px #000a}
+.legend{position:absolute;right:10px;bottom:10px;display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:#dfe2ee;text-shadow:0 1px 2px #000a}
+.legend i{display:block;width:120px;height:8px;border-radius:2px;background:linear-gradient(90deg,#3b4cc0,#8db0fe,#dddddd,#f49a7b,#b40426)}
+.over{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(18,19,28,.78);padding:16px}
+.over.show{display:flex}
+.card{max-width:620px;width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:16px 18px}
+.card pre{font-family:var(--mono);font-size:12px;line-height:1.5;margin:0 0 10px;white-space:pre-wrap;color:#d9dbe6}
+.card pre .e{color:#ff8a7a}
+.card h2{font-family:var(--serif);font-weight:400;font-size:28px;margin:0 0 4px}
+.card p{margin:4px 0 12px;color:var(--muted)}
+.stars{font-size:26px;color:var(--warn);letter-spacing:4px}
+.stars .d{color:#4b4f66}
+.btn{font-family:var(--sans);font-weight:600;font-size:15px;color:#111;background:var(--coolL);border:0;border-radius:4px;padding:8px 14px;cursor:pointer;margin-right:8px}
+.btn.alt{background:transparent;color:var(--text);border:1px solid var(--line)}
+
+/* bottom */
+.below{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:12px;margin-top:12px}
+.brief{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 16px}
+.brief .path{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.brief h2{font-family:var(--serif);font-weight:400;font-size:26px;margin:2px 0 6px}
+.brief p{margin:0 0 12px;max-width:60ch}
+.prog{height:10px;background:#34384d;border-radius:5px;overflow:hidden;margin:6px 0 4px}
+.prog span{display:block;height:100%;width:0;background:var(--ok)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+.row select{font-family:var(--sans);font-size:14px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:6px 8px}
+.small{font-size:13px;color:var(--muted)}
+.log{background:#11121a;border:1px solid var(--line);border-radius:6px;padding:10px 12px;font-family:var(--mono);font-size:12px;line-height:1.5;color:#c9ccd9;height:250px;overflow:auto;white-space:pre}
+.log .w{color:var(--warn)} .log .g{color:var(--ok)} .log .e{color:#ff8a7a}
+footer{margin-top:18px;font-size:13px;color:var(--muted)}
+footer code{font-family:var(--mono);font-size:12px}
+
+@media (max-width:900px){
+  .eq{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .op{display:none}
+  .term{background:#232637}
+  .below{grid-template-columns:1fr}
+  h1{font-size:26px}
+}
+@media (max-width:520px){ .eq{grid-template-columns:repeat(2,minmax(0,1fr))} .term .sym{font-size:26px} .wrap{padding:12px} }
+
+.readme{max-width:720px;margin:6px auto 0;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:26px 32px 22px;font-family:var(--serif);font-size:18px;line-height:1.6}
+.readme h2{font-weight:400;font-size:34px;margin:0 0 10px;line-height:1.2}
+.readme h3{font-family:var(--sans);font-weight:700;font-size:17px;margin:26px 0 6px;color:var(--coolL)}
+.readme p,.readme li{max-width:66ch;margin:0 0 12px}
+.readme .lead{font-size:20px;color:#d7daea}
+.readme ol{padding-left:22px}
+.readme .math{font-size:20px;text-align:center;background:#171926;border-radius:4px;padding:10px;overflow-x:auto;max-width:none}
+.readme .refs{font-size:15.5px;color:var(--muted)}
+.readme b{font-weight:600}
+@media (max-width:520px){.readme{padding:18px 16px;font-size:17px}}
+[hidden]{display:none!important}
+.cases button.how{margin-left:10px;font-family:var(--sans);font-size:14px;font-weight:600;color:var(--text);border-color:var(--coolL)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1><b>foamFun</b> — a birthday case</h1>
+  <nav class="cases" id="cases" aria-label="Cases"></nav>
+</header>
+
+<div id="game">
+<section class="eq" aria-label="Momentum equation controls">
+  <div class="op">ρ(</div>
+  <div class="term" id="t-ddt"><div class="sym">∂<i>u</i>/∂<i>t</i></div><div class="bar"><span></span></div><div class="ctl"><span class="note">the clock. Always on.</span></div></div>
+  <div class="op">+</div>
+  <div class="term" id="t-conv"><div class="sym"><i>u</i>·∇<i>u</i></div><div class="bar"><span></span></div>
+    <div class="ctl"><label class="sw"><input type="checkbox" id="conv" checked> convection</label><span class="note" id="convNote"></span></div></div>
+  <div class="op">)</div>
+  <div class="op">=</div>
+  <div class="term" id="t-p"><div class="sym">−∇<i>p</i></div><div class="bar"><span></span></div>
+    <div class="ctl" id="pCtl"><label for="dp">Δ<i>p</i> <span class="val" id="dpVal"></span></label><input type="range" id="dp" min="0" max="1000" value="100"></div></div>
+  <div class="op">+</div>
+  <div class="term" id="t-nu"><div class="sym">μ∇²<i>u</i></div><div class="bar"><span></span></div>
+    <div class="ctl" id="nuCtl"><label for="nu">ν <span class="val" id="nuVal"></span></label><input type="range" id="nu" min="0" max="1000" value="500"></div></div>
+  <div class="op">+</div>
+  <div class="term" id="t-g"><div class="sym">ρ<i>g</i></div><div class="bar"><span></span></div>
+    <div class="ctl" id="gCtl">
+      <label for="g"><i>g</i> <span class="val" id="gVal"></span></label><input type="range" id="g" min="0" max="1000" value="400">
+      <label for="heat">heater Δ<i>T</i> <span class="val" id="heatVal"></span></label><input type="range" id="heat" min="0" max="1000" value="200">
+    </div></div>
+  <div class="op">+</div>
+  <div class="term" id="t-f"><div class="sym"><i>f</i></div><div class="bar"><span></span></div>
+    <div class="ctl" id="fCtl"></div></div>
+</section>
+
+<div class="stage">
+  <canvas id="view" width="1056" height="528" aria-label="Flow field"></canvas>
+  <div class="hud"><span id="hudL"></span><span id="hudR"></span></div>
+  <div class="legend"><span id="legLo"></span><i></i><span id="legHi"></span></div>
+  <div class="over" id="over"><div class="card" id="card"></div></div>
+</div>
+
+<div class="below">
+  <div class="brief">
+    <div class="path" id="path"></div>
+    <h2 id="title"></h2>
+    <p id="brief"></p>
+    <div class="small" id="goal"></div>
+    <div class="prog"><span id="prog"></span></div>
+    <div class="row">
+      <button class="btn" id="restart">Restart case</button>
+      <button class="btn alt" id="pause">Pause</button>
+      <button class="btn alt" id="finish" hidden>Finish</button>
+      <label class="small" for="field">Colour by</label>
+      <select id="field"><option value="U">U (magnitude)</option><option value="W">vorticity</option><option value="T">T</option></select>
+    </div>
+  </div>
+  <div class="log" id="log" aria-live="off"></div>
+</div>
+</div>
+<article id="readme" class="readme" hidden>
+  <h2>How the flow is calculated</h2>
+  <p class="lead">No OpenFOAM inside, sorry. Everything runs in your browser in about 300 lines of JavaScript. The core is Jos Stam’s <em>Stable Fluids</em> (1999), the classic real-time method, with one upgrade to the advection.</p>
+
+  <h3>Equations and mesh</h3>
+  <p>The solver integrates the 2D incompressible Navier–Stokes equations with a Boussinesq buoyancy term:</p>
+  <p class="math">∂<i>u</i>/∂<i>t</i> + (<i>u</i>·∇)<i>u</i> = −∇<i>p</i> + ν∇²<i>u</i> + β<i>g</i><i>T</i> <b>ĵ</b> + <i>f</i>,&nbsp;&nbsp;&nbsp; ∇·<i>u</i> = 0</p>
+  <p>The mesh is a uniform Cartesian grid of 176 × 88 cells with all variables collocated at cell centres. Walls, the step, the cylinder and the tree are just a mask of blocked cells, so every curved surface is a staircase. Everything is in grid units, Δ<i>x</i> = Δ<i>t</i> = 1, and 100 time steps are shown as one second.</p>
+
+  <h3>One time step, one term at a time</h3>
+  <p>Instead of solving the equation as a whole, each step is split into sub-steps, and each sub-step applies one term. This is exactly why the terms in the game can be switched off: a switch simply skips its sub-step.</p>
+  <ol>
+    <li><b>Body forces</b>, explicitly: buoyancy β<i>gT</i> in hotRoom and your wind <i>f</i> in the last case.</li>
+    <li><b>Viscous diffusion</b>, implicit Euler: (<i>I</i> − νΔ<i>t</i>∇²)<i>u</i> = <i>u</i>*, a few Jacobi sweeps. No-slip comes for free because blocked cells hold zero velocity.</li>
+    <li><b>Convection</b>, semi-Lagrangian: each cell centre is traced backwards along the local velocity and the old field is interpolated there bilinearly. Plain semi-Lagrangian is very diffusive, so it is wrapped in BFECC (back-and-forth error compensation), with a limiter against overshoots. This is what keeps the Kármán street alive.</li>
+    <li><b>Pressure projection</b>: solve ∇²<i>p</i> = ∇·<i>u</i>* with 20 Jacobi sweeps and subtract ∇<i>p</i>. Zero gradient at walls, <i>p</i> = 0 at the outlet. In the closed rooms this is the only job of the pressure: keeping ∇·<i>u</i> = 0.</li>
+    <li><b>Temperature</b> is a passive scalar, advected semi-Lagrangian, with the heater cells held at fixed <i>T</i>.</li>
+  </ol>
+  <p>Compared with pimpleFoam this is a non-iterative fractional-step projection (Chorin’s method): no PISO correctors, no outer loops, first-order splitting error, Jacobi instead of GAMG and no Rhie–Chow, so the collocated checkerboard is just smoothed away. The “residual” in the log is the mean divergence before projection, which is at least an honest number.</p>
+
+  <h3>What is faked</h3>
+  <p><b>Δp is not a pressure boundary condition.</b> The bulk inlet velocity comes from a lumped law, Δ<i>p</i> = <i>a</i>ν<i>U</i> + <i>bU</i>², a Hagen–Poiseuille-like part plus a quadratic loss, relaxed in time so the flow spins up. It is imposed as a plug profile with smoothed edges.</p>
+  <p><b>The crash is a game rule.</b> Semi-Lagrangian advection is unconditionally stable, so this solver would happily run at Courant 10. The fatal error at Co &gt; 2 is there for the drama.</p>
+  <p><b>The Reynolds number is optimistic.</b> At low ν the numerical diffusion of the advection is larger than the physical viscosity, so the effective Re is lower than the one in the corner. The shedding, recirculation and plumes are nevertheless produced by the flow itself, not scripted.</p>
+  <p><b>Units are decorative.</b> The ν shown is the grid value rescaled so that the lowest setting looks like water; the fluid names, Pa, K and planets are for fun.</p>
+  <p><b>Particles</b> are one-way-coupled tracers: <i>x</i><sub>n+1</sub> = <i>x</i><sub>n</sub> + <i>u</i>(<i>x</i><sub>n</sub>)Δ<i>t</i> − <i>w</i><sub>s</sub><b>ĵ</b>, with a settling velocity <i>w</i><sub>s</sub> for the heavy ones and a small random walk for the dye. A leaf stays on the tree until the local speed exceeds its grip for a few steps; then it falls with a little flutter.</p>
+  <p><b>The term bars</b> show the RMS change of velocity produced by each sub-step, normalised by the largest one. When the flow becomes steady, ∂<i>u</i>/∂<i>t</i> drops and the other terms balance each other, which is the equation doing exactly what it says.</p>
+
+  <h3>Further reading</h3>
+  <p class="refs">A. J. Chorin, Numerical solution of the Navier–Stokes equations, <i>Math. Comp.</i> 1968.<br>
+  J. Stam, Stable fluids, <i>SIGGRAPH</i> 1999.<br>
+  B. Kim, Y. Liu, I. Llamas, J. Rossignac, FlowFixer: using BFECC for fluid simulation, 2005.</p>
+  <p><button class="btn" id="backToGame">Back to the game</button></p>
+</article>
+
+<footer>A small incompressible solver in your browser. Split-step: forces, diffusion, advection, pressure projection, one term at a time. The physics is honest-ish, the Reynolds numbers are not. Space pauses, R restarts.</footer>
+</div>
+
+<script>
+// ---- fluid core (grid units, dx=1, dt=1) ----
+function Sim(NX, NY){
+  const N=NX*NY, S=this;
+  S.NX=NX; S.NY=NY; S.N=N;
+  const A=()=>new Float32Array(N);
+  S.u=A(); S.v=A(); S.p=A(); S.T=A(); S.solid=new Uint8Array(N); S.inlet=new Uint8Array(N); S.outlet=new Uint8Array(N); S.heater=new Uint8Array(N);
+  S.fx=A(); S.fy=A(); S.div=A(); S.t1=A(); S.t2=A(); S.t3=A(); S.t4=A(); S.u0=A(); S.v0=A(); S.w=A();
+  S.nu=0.01; S.conv=true; S.Uin=0; S.inletProf=A(); S.vort=0.0; S.g=0; S.beta=0; S.Th=0; S.open=false;
+  S.mag={ddt:0,conv:0,p:0,diff:0,g:0,f:0}; S.step=0; S.Co=0; S.CoMean=0; S.res0=0;
+}
+Sim.prototype.idx=function(i,j){return i+j*this.NX};
+Sim.prototype.sample=function(f,x,y){
+  const NX=this.NX,NY=this.NY;
+  if(x<0)x=0; if(y<0)y=0; if(x>NX-1.001)x=NX-1.001; if(y>NY-1.001)y=NY-1.001;
+  const i=x|0,j=y|0,a=x-i,b=y-j,k=i+j*NX;
+  return (1-a)*(1-b)*f[k]+a*(1-b)*f[k+1]+(1-a)*b*f[k+NX]+a*b*f[k+NX+1];
+};
+Sim.prototype.sl=function(dst,src,sgn){ // semi-Lagrangian
+  const NX=this.NX,NY=this.NY,u=this.u,v=this.v,s=this.solid;
+  for(let j=0;j<NY;j++)for(let i=0;i<NX;i++){const k=i+j*NX; if(s[k]){dst[k]=0;continue}
+    dst[k]=this.sample(src,i-sgn*u[k],j-sgn*v[k]);}
+};
+Sim.prototype.bfecc=function(dst,src){
+  const a=this.t1,b=this.t2,c=this.t3,N=this.N,NX=this.NX,NY=this.NY,u=this.u,v=this.v,s=this.solid;
+  this.sl(a,src,1); this.sl(b,a,-1);
+  for(let k=0;k<N;k++)c[k]=src[k]+0.5*(src[k]-b[k]);
+  this.sl(dst,c,1);
+  // clamp
+  for(let j=0;j<NY;j++)for(let i=0;i<NX;i++){const k=i+j*NX; if(s[k])continue;
+    let x=i-u[k],y=j-v[k]; if(x<0)x=0;if(y<0)y=0;if(x>NX-1.001)x=NX-1.001;if(y>NY-1.001)y=NY-1.001;
+    const ii=x|0,jj=y|0,q=ii+jj*NX; const m1=Math.min(src[q],src[q+1],src[q+NX],src[q+NX+1]),m2=Math.max(src[q],src[q+1],src[q+NX],src[q+NX+1]);
+    if(dst[k]<m1||dst[k]>m2)dst[k]=a[k];}
+};
+Sim.prototype.bc=function(){
+  const N=this.N,u=this.u,v=this.v,s=this.solid,NX=this.NX;
+  for(let k=0;k<N;k++){ if(s[k]){u[k]=0;v[k]=0} else if(this.inlet[k]){u[k]=this.Uin*this.inletProf[k];v[k]=0} else if(this.outlet[k]){u[k]=Math.max(0,u[k-1]);v[k]=v[k-1]} }
+};
+Sim.prototype.diffuse=function(f,f0,it){
+  if(!this.pm)this.prep(); const a=this.nu,NX=this.NX,cells=this.pcells,M=cells.length,den=1/(1+4*a);
+  f0.set(f);
+  for(let n=0;n<it;n++)for(let q=0;q<M;q++){const k=cells[q]; f[k]=(f0[k]+a*(f[k-1]+f[k+1]+f[k-NX]+f[k+NX]))*den;}
+};
+Sim.prototype.project=function(it){
+  const NX=this.NX,NY=this.NY,u=this.u,v=this.v,p=this.p,d=this.div,s=this.solid,out=this.outlet;
+  for(let j=1;j<NY-1;j++)for(let i=1;i<NX-1;i++){const k=i+j*NX; d[k]=s[k]?0:0.5*(u[k+1]-u[k-1]+v[k+NX]-v[k-NX]);}
+  let r0=0; for(let k=0;k<this.N;k++)r0+=Math.abs(d[k]); this.res0=r0/this.N;
+  if(!this.pm){ this.prep(); }
+  const pm=this.pm, cells=this.pcells, M=cells.length;
+  for(let n=0;n<it;n++)for(let q=0;q<M;q++){const k=cells[q], m=pm[k];
+    let sum=0; if(m&1)sum+=p[k-1]; if(m&2)sum+=p[k+1]; if(m&4)sum+=p[k-NX]; if(m&8)sum+=p[k+NX];
+    p[k]=(sum-d[k])*this.pinv[k];}
+  for(let j=1;j<NY-1;j++)for(let i=1;i<NX-1;i++){const k=i+j*NX; if(s[k]||this.inlet[k]||out[k])continue;
+    const pE=(s[k+1]||this.inlet[k+1])?p[k]:p[k+1], pW=(s[k-1]||this.inlet[k-1])?p[k]:p[k-1];
+    const pN=(s[k+NX])?p[k]:p[k+NX], pS=(s[k-NX])?p[k]:p[k-NX];
+    u[k]-=0.5*(pE-pW); v[k]-=0.5*(pN-pS);}
+};
+Sim.prototype.prep=function(){
+  const NX=this.NX,NY=this.NY,s=this.solid,inl=this.inlet,out=this.outlet; this.pm=new Uint8Array(this.N); this.pinv=new Float32Array(this.N); const c=[];
+  for(let j=1;j<NY-1;j++)for(let i=1;i<NX-1;i++){const k=i+j*NX; if(s[k]||out[k]||inl[k])continue; let m=0,n=0;
+    if(!s[k-1]&&!inl[k-1]){m|=1;n++} if(!s[k+1]&&!inl[k+1]){m|=2;n++} if(!s[k-NX]&&!inl[k-NX]){m|=4;n++} if(!s[k+NX]&&!inl[k+NX]){m|=8;n++}
+    this.pm[k]=m; this.pinv[k]=n?1/n:0; c.push(k);} this.pcells=Int32Array.from(c);
+};
+Sim.prototype.rmsDelta=function(a,b,c,d){let s=0,n=0;const sol=this.solid;for(let k=0;k<this.N;k++){if(sol[k])continue;const x=a[k]-b[k],y=c[k]-d[k];s+=x*x+y*y;n++}return Math.sqrt(s/Math.max(n,1))};
+Sim.prototype.stepOnce=function(){
+  const N=this.N,NX=this.NX,NY=this.NY,u=this.u,v=this.v,s=this.solid,u0=this.u0,v0=this.v0;
+  if(!this.su){this.su=new Float32Array(N);this.sv=new Float32Array(N);this.nu_=new Float32Array(N);this.nv_=new Float32Array(N);this.tt=new Float32Array(N)} const su=this.su,sv=this.sv; su.set(u); sv.set(v);
+  // forces: buoyancy, user, vorticity confinement
+  let gm=0,fm=0,nf=0;
+  const T=this.T;
+  if(this.vort>0){ const w=this.w; for(let j=1;j<NY-1;j++)for(let i=1;i<NX-1;i++){const k=i+j*NX; w[k]=0.5*(v[k+1]-v[k-1]-u[k+NX]+u[k-NX]);}
+    for(let j=2;j<NY-2;j++)for(let i=2;i<NX-2;i++){const k=i+j*NX; if(s[k])continue; const gx=0.5*(Math.abs(w[k+1])-Math.abs(w[k-1])), gy=0.5*(Math.abs(w[k+NX])-Math.abs(w[k-NX])); const l=Math.hypot(gx,gy)+1e-6;
+      u[k]+=this.vort*(gy/l)*w[k]; v[k]-=this.vort*(gx/l)*w[k];}}
+  for(let k=0;k<N;k++){ if(s[k])continue; nf++;
+    const b=this.beta*this.g*T[k]; v[k]+=b; gm+=b*b;
+    const fx=this.fx[k],fy=this.fy[k]; if(fx||fy){u[k]+=fx;v[k]+=fy;fm+=fx*fx+fy*fy} }
+  this.bc();
+  // diffusion
+  u0.set(u); v0.set(v);
+  const t4=this.t4; const di=this.nu<0.004?2:(this.nu<0.03?5:10); this.diffuse(u,t4,di); this.diffuse(v,t4,di);
+  this.mag.diff=this.rmsDelta(u,u0,v,v0);
+  this.bc();
+  // convection
+  if(this.conv){ u0.set(u); v0.set(v); const nu_=this.nu_, nv_=this.nv_;
+    this.bfecc(nu_,u0); this.bfecc(nv_,v0); u.set(nu_); v.set(nv_);
+    this.mag.conv=this.rmsDelta(u,u0,v,v0); } else this.mag.conv=0;
+  this.bc();
+  u0.set(u); v0.set(v);
+  this.project(this.pit||25); this.bc();
+  this.mag.p=this.rmsDelta(u,u0,v,v0);
+  // scalar T
+  if(this.beta){ const t=this.tt; this.sl(t,T,1); for(let k=0;k<N;k++){T[k]=this.heater[k]?this.Th:t[k]*0.9985} }
+  this.mag.g=Math.sqrt(gm/Math.max(nf,1)); this.mag.f=Math.sqrt(fm/Math.max(nf,1));
+  this.mag.ddt=this.rmsDelta(u,su,v,sv);
+  let cm=0,cs=0; for(let k=0;k<N;k++){if(s[k])continue; const m=Math.hypot(u[k],v[k]); cs+=m; if(m>cm)cm=m}
+  this.Co=cm; this.CoMean=cs/Math.max(nf,1); this.step++;
+};
+if(typeof module!=='undefined')module.exports=Sim;
+
+</script>
+<script>
+// ---- levels + particles (no DOM) ----
+const NX=176, NY=88;
+function rect(S,x0,y0,x1,y1,arr){for(let j=y0;j<=y1;j++)for(let i=x0;i<=x1;i++)(arr||S.solid)[i+j*NX]=1;}
+function channel(S,yLo){ for(let j=0;j<NY;j++)for(let i=0;i<NX;i++){const k=i+j*NX;
+  if(j==0||j==NY-1)S.solid[k]=1; else if(i==0){ if(j>=yLo){S.inlet[k]=1;S.inletProf[k]=Math.tanh((j-yLo+1)/3)*Math.tanh((NY-1-j)/3)} else S.solid[k]=1;} else if(i==NX-1)S.outlet[k]=1;} }
+function box(S){ for(let j=0;j<NY;j++)for(let i=0;i<NX;i++){ if(j==0||j==NY-1||i==0||i==NX-1)S.solid[i+j*NX]=1; } }
+const LEVELS=[
+ {id:'pipeBucket', path:'incompressible/pimpleFoam/pipeBucket', title:'Hit the bucket',
+  brief:'Heavy drops fall as they travel. The pressure drop Δp sets how fast the air enters on the left: tune it so the drops land in the bucket, not on the floor and not out the outlet.',
+  terms:{dp:true}, dpMax:0.25, Lref:86, nu:0.02, g:1, dp0:0.03, open:true, T:3600,
+  setup(S){channel(S,1); rect(S,116,1,117,16); rect(S,140,1,141,16);},
+  nozzle:{x:4,y:68,dy:2,rate:0.4}, settle:0.11, target:{x0:118,y0:1,x1:139,y1:15,mode:'capture',need:120}, field:'U'},
+ {id:'pitzDaily', path:'incompressible/pimpleFoam/pitzDaily', title:'Fill the bubble',
+  brief:'Trap dye in the recirculation behind the step. Δp sets the inlet speed, ν the fluid. A lazy, viscous flow never lets it in.',
+  terms:{dp:true,nu:true}, dpMax:1.5, Lref:34, nu:0.15, g:0, dp0:0.3, open:true, T:4200,
+  setup(S){channel(S,34); rect(S,0,0,43,33);},
+  nozzle:{x:2,y:38,dy:3,rate:1}, settle:0, jitter:0.05, life:1500, target:{x0:45,y0:1,x1:72,y1:22,mode:'hold',need:70}, field:'W'},
+ {id:'cylinder', path:'incompressible/pimpleFoam/cylinder', title:'Kármán catapult',
+  brief:'Dye leaves the nozzle dead on axis. Get the wake to fling it into the basket above.',
+  terms:{dp:true,nu:true}, dpMax:1, Lref:13, nu:0.2, g:0, dp0:0.3, open:true, T:4200,
+  setup(S){channel(S,1); for(let j=0;j<NY;j++)for(let i=0;i<NX;i++)if(Math.hypot(i-40,j-44)<6.5)S.solid[i+j*NX]=1;},
+  nozzle:{x:3,y:44,dy:1,rate:1.2}, settle:0, jitter:0.02, target:{x0:118,y0:64,x1:150,y1:84,mode:'capture',need:70}, field:'W'},
+ {id:'hotRoom', path:'heatTransfer/buoyantFoam/hotRoom', title:'Hot room',
+  brief:'Lift the heavy dust over the wall with the heater. More gravity means more buoyancy, but the dust also falls faster.',
+  terms:{nu:true,g:true}, Lref:30, nu:0.02, g:0.5, heat0:0.2, open:false, T:5000,
+  setup(S){box(S); rect(S,70,1,72,34); rect(S,14,1,34,3,S.heater);},
+  nozzle:{x:24,y:6,dy:2,rate:0.6}, settle:0.04, target:{x0:76,y0:1,x1:174,y1:86,mode:'capture',need:120}, field:'T'},
+ {id:'autumn', path:'incompressible/pimpleFoam/autumn', title:'Autumn wind',
+  brief:'Drag on the air to make wind: fast strokes through the crown work best. Three quarters of the leaves down wins, all of them gets three stars. Press Finish whenever you have had enough.',
+  terms:{nu:true,f:true}, Lref:20, nu:0.01, g:0, open:false, T:6000,
+  setup(S,st){box(S); rect(S,86,1,89,34); // trunk
+    const br=[[88,33,80,40],[88,35,96,43]];
+    for(const [x0,y0,x1,y1] of br){const n=Math.max(Math.abs(x1-x0),Math.abs(y1-y0)); for(let q=0;q<=n;q++){const x=Math.round(x0+(x1-x0)*q/n),y=Math.round(y0+(y1-y0)*q/n); S.solid[x+y*NX]=1;}}
+    let seed=7; const rnd=()=>{seed=(seed*16807)%2147483647; return seed/2147483647};
+    st.leaves=[]; while(st.leaves.length<st.nLeaves){ const x=88+(rnd()*2-1)*30, y=52+(rnd()*2-1)*20; if(((x-88)/30)**2+((y-52)/20)**2>1)continue; if(S.solid[Math.round(x)+Math.round(y)*NX])continue;
+      st.leaves.push({x,y,x0:x,y0:y,on:true,hot:0,grip:0.07+rnd()*0.09,a:rnd()*6.28,c:(rnd()*4)|0,spin:(rnd()-0.5)*0.2});}},
+  nozzle:null, target:{mode:'leaves'}, field:'U'}
+];
+function dpToU(dp,nu){const A=10*nu,B=0.6;return (-A+Math.sqrt(A*A+4*B*dp))/(2*B)}
+function Game(Sim,li,opts){
+  const L=LEVELS[li], S=new Sim(NX,NY); this.L=L; this.S=S; this.li=li;
+  this.nLeaves=(opts&&opts.leaves)||60;
+  L.setup(S,this); S.prep();
+  S.nu=L.nu; S.g=L.g||0; S.beta=L.id=='hotRoom'?0.03:0; S.Th=L.heat0||0; this.dp=L.dp0||0; S.pit=20;
+  this.MAX=2500; this.px=new Float32Array(this.MAX); this.py=new Float32Array(this.MAX); this.age=new Float32Array(this.MAX); this.st=new Uint8Array(this.MAX); this.np=0; this.acc=0;
+  this.count=0; this.best=0; this.step=0; this.state='run'; this.breath=100; this.breathUsed=0; this.energy=0;
+}
+Game.prototype.emit=function(){const n=this.L.nozzle; if(!n)return; this.acc+=n.rate;
+  while(this.acc>=1){this.acc--; let k=-1; for(let q=0;q<this.MAX;q++){const c=(this.cur=((this.cur|0)+1)%this.MAX); if(!this.st[c]){k=c;break}} if(k<0)return;
+    this.px[k]=n.x+Math.random(); this.py[k]=n.y+(Math.random()*2-1)*n.dy; this.age[k]=0; this.st[k]=1;}};
+Game.prototype.update=function(){
+  if(this.state!=='run')return; const S=this.S,L=this.L;
+  if(L.open){ const Ut=dpToU(this.dp,S.nu); S.Uin+=(Ut-S.Uin)*0.03; this.energy+=this.dp*S.Uin; }
+  S.stepOnce(); this.step++;
+  if(S.Co>2){this.state='crash';return}
+  this.emit();
+  const ws=(L.settle||0)*(L.id=='hotRoom'?S.g/0.5:1), jit=L.jitter||0, t=L.target; let inside=0;
+  for(let k=0;k<this.MAX;k++){ if(this.st[k]!==1)continue; let x=this.px[k],y=this.py[k];
+    const u=S.sample(S.u,x,y), v=S.sample(S.v,x,y);
+    let nx=x+u+(Math.random()-0.5)*jit, ny=y+v-ws+(Math.random()-0.5)*jit;
+    const ci=Math.round(nx),cj=Math.round(ny);
+    if(nx>=NX-1.5||nx<0){this.st[k]=0;continue}
+    if(cj<0||cj>=NY||S.solid[ci+cj*NX]){ if(ws>0&&ny<y&&S.solid[Math.round(x)+cj*NX]){this.st[k]=2; this.age[k]=0; this.py[k]=cj+0.6; continue} nx=x; ny=y; }
+    this.px[k]=nx; this.py[k]=ny; this.age[k]++;
+    if(L.life&&this.age[k]>L.life){this.st[k]=0;continue}
+    if(t.mode!=='candles'&&nx>=t.x0&&nx<=t.x1+1&&ny>=t.y0&&ny<=t.y1+1){ if(t.mode=='capture'){this.st[k]=0;this.count++} else inside++; }
+  }
+  for(let k=0;k<this.MAX;k++) if(this.st[k]===2&&++this.age[k]>90)this.st[k]=0;  // settled drops fade
+  if(t.mode=='hold'){this.count=inside; this.best=Math.max(this.best,inside)}
+  if(t.mode=='leaves'){ let on=0; for(const l of this.leaves){ const u=S.sample(S.u,l.x,l.y), v=S.sample(S.v,l.x,l.y), sp=Math.hypot(u,v);
+      if(l.on){ if(sp>l.grip)l.hot++; else l.hot=Math.max(0,l.hot-0.5); l.x=l.x0+u*6; l.y=l.y0+v*6; if(l.hot>7){l.on=false;} else on++; }
+      else { let nx=l.x+u+0.15*Math.sin(l.a*2), ny=l.y+v-0.035; l.a+=l.spin+sp*0.3;
+        if(nx<1.5)nx=1.5; if(nx>NX-2.5)nx=NX-2.5; if(ny>NY-2.5)ny=NY-2.5;
+        if(ny<1.4||S.solid[Math.round(nx)+Math.round(ny)*NX]){ if(ny<1.4)ny=1.4; else {nx=l.x;ny=l.y} }
+        l.x=nx; l.y=ny; } }
+    this.count=this.leaves.length-on; this.need=this.leaves.length;
+    if(!this.blowing)this.breath=Math.min(100,this.breath+0.1); this.blowing=false;
+    if(on==0)this.state='win'; }
+  else { this.need=t.need; if(this.count>=t.need)this.state='win'; }
+  if(this.state==='run'&&this.step>=L.T)this.state=(t.mode==='leaves'&&this.count>=0.75*this.need)?'win':'timeout';
+};
+Game.prototype.blow=function(x,y,dx,dy){ // user force f
+  const S=this.S; if(this.breath<=0){this.blowing=false;return}
+  const m=Math.hypot(dx,dy); if(m<1e-3)return; const s=Math.min(m,4)*0.03, ux=dx/m, uy=dy/m, R=7; let used=0;
+  for(let j=Math.max(1,(y-R)|0);j<=Math.min(NY-2,(y+R)|0);j++)for(let i=Math.max(1,(x-R)|0);i<=Math.min(NX-2,(x+R)|0);i++){
+    let w=1-Math.hypot(i-x,j-y)/R; if(w<=0)continue; const k=i+j*NX; w*=Math.max(0,1-Math.hypot(S.u[k],S.v[k])/1.1); S.fx[k]+=ux*s*w; S.fy[k]+=uy*s*w; used+=s*w;}
+  this.breath-=used*0.12; this.breathUsed+=used*0.12; if(this.breath<0)this.breath=0; this.blowing=true;
+};
+Game.prototype.decayForce=function(){const S=this.S; for(let k=0;k<S.N;k++){S.fx[k]*=0.6;S.fy[k]*=0.6}};
+Game.prototype.stars=function(){ // 1-3
+  const L=this.L,f=this.step/L.T; if(this.state!=='win')return 0;
+  if(L.id=='autumn'){const q=this.count/this.need; return q>=1?3:q>=0.9?2:1;}
+  return f<0.4?3:f<0.7?2:1; };
+if(typeof module!=='undefined')module.exports={LEVELS,Game,NX,NY,dpToU};
+
+</script>
+<script>
+(function(){
+const qs=new URLSearchParams(location.search);
+const NAME=(qs.get('name')||'').slice(0,30), LEAVES=Math.max(5,Math.min(150,parseInt(qs.get('leaves'))||60));
+const $=id=>document.getElementById(id);
+const cv=$('view'), ctx=cv.getContext('2d'); const off=document.createElement('canvas'); off.width=NX; off.height=NY; const octx=off.getContext('2d'); const img=octx.createImageData(NX,NY);
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let G=null, li=0, paused=false, field='U', t0=performance.now(), logLines=[], best={};
+try{best=JSON.parse(localStorage.getItem('foamFun.best')||'{}')}catch(e){best={}}
+
+// colormap: ParaView Cool to Warm
+const CM=[[0,59,76,192],[.25,141,176,254],[.5,221,221,221],[.75,244,154,123],[1,180,4,38]];
+const LUT=new Uint8Array(256*3); for(let i=0;i<256;i++){const x=i/255; let a=0; while(a<3&&x>CM[a+1][0])a++; const p=CM[a],q=CM[a+1],t=(x-p[0])/(q[0]-p[0]); for(let c=0;c<3;c++)LUT[i*3+c]=Math.round(p[c+1]+(q[c+1]-p[c+1])*t);}
+
+// ---- slider mappings ----
+const NU0=0.002,NU1=0.4;
+const nuFrom=s=>Math.pow(10,Math.log10(NU0)+s/1000*(Math.log10(NU1)-Math.log10(NU0)));
+const nuTo=nu=>Math.round(1000*(Math.log10(nu)-Math.log10(NU0))/(Math.log10(NU1)-Math.log10(NU0)));
+const fluid=nu=>nu<0.006?'water':nu<0.03?'olive oil':nu<0.12?'syrup':'honey';
+const gFrom=s=>0.08+s/1000*(1.26-0.08), gTo=g=>Math.round((g-0.08)/(1.26-0.08)*1000);
+const planet=g=>{const a=g*19.62; return a<3?'Moon':a<6?'Mars':a<13?'Earth':a<20?'Neptune-ish':'Jupiter'};
+const fmtE=x=>x.toExponential(1).replace('e-','e-0').replace('e+','e+0');
+
+function readControls(){ if(!G)return; const L=G.L,S=G.S;
+  if(L.terms.dp){ G.dp=L.dpMax*$('dp').value/1000; }
+  if(L.terms.nu){ S.nu=nuFrom(+$('nu').value); }
+  if(L.terms.g){ S.g=gFrom(+$('g').value); S.Th=+$('heat').value/1000; }
+  S.conv=$('conv').checked;
+  labels(); }
+function labels(){ const L=G.L,S=G.S;
+  $('dpVal').textContent=L.open?(G.dp*400).toFixed(0)+' Pa':''; const ui=$('uinVal'); if(ui&&L.open){ ui.textContent='pushes the inlet at '+dpToU(G.dp,S.nu).toFixed(2)+' m/s'+(L.terms.nu?' (less when thicker)':''); }
+  const Uref=L.open?dpToU(G.dp,S.nu):Math.max(S.CoMean||0,0.01)*2;
+  $('nuVal').textContent=fmtE(S.nu/0.003*1e-6)+' m²/s, '+fluid(S.nu)+(L.id!=='pipeBucket'?'':'');
+  $('gVal').textContent=(S.g*19.62).toFixed(1)+' m/s², '+planet(S.g);
+  $('heatVal').textContent=(S.Th*60).toFixed(0)+' K';
+  G.Re=Math.round(Uref*L.Lref/Math.max(S.nu,1e-4)); }
+
+function setTerm(id,state,note){ const el=$(id); el.classList.toggle('locked',state==='locked'); el.classList.toggle('off',state==='off'); }
+function setupUI(){ const L=G.L;
+  $('path').textContent='$ cd $FOAM_TUTORIALS/'+L.path;
+  $('title').textContent=L.title; $('brief').textContent=L.brief;
+  // ∇p
+  if(L.open&&L.terms.dp){ $('pCtl').innerHTML='<label for="dp">Δ<i>p</i> <span class="val" id="dpVal"></span></label><input type="range" id="dp" min="0" max="1000"><div class="note" id="uinVal"></div>'; $('dp').value=Math.round(1000*L.dp0/L.dpMax); $('dp').oninput=readControls; setTerm('t-p','');}
+  else { $('pCtl').innerHTML='<span class="note">closed room: pressure only keeps ∇·u = 0</span><span id="dpVal" hidden></span>'; setTerm('t-p','locked'); }
+  // ν
+  if(L.terms.nu){ $('nuCtl').innerHTML='<label for="nu">ν <span class="val" id="nuVal"></span></label><input type="range" id="nu" min="0" max="1000">'; $('nu').value=nuTo(L.nu); $('nu').oninput=readControls; setTerm('t-nu','');}
+  else { $('nuCtl').innerHTML='<span class="note">fixed for this case</span><br><span class="val" id="nuVal"></span>'; setTerm('t-nu','locked'); }
+  // g
+  if(L.terms.g){ $('gCtl').innerHTML='<label for="g"><i>g</i> <span class="val" id="gVal"></span></label><input type="range" id="g" min="0" max="1000"><label for="heat">heater Δ<i>T</i> <span class="val" id="heatVal"></span></label><input type="range" id="heat" min="0" max="1000">';
+    $('g').value=gTo(L.g); $('heat').value=Math.round(1000*L.heat0); $('g').oninput=readControls; $('heat').oninput=readControls; setTerm('t-g','');}
+  else { $('gCtl').innerHTML=(L.id==='pipeBucket'?'<span class="note">the drops are heavy, the air is not</span>':'<span class="note">no buoyancy here</span>')+'<span id="gVal" hidden></span><span id="heatVal" hidden></span>'; setTerm('t-g','locked'); }
+  // f
+  if(L.terms.f){ $('fCtl').innerHTML='<span class="note">drag on the air to make wind</span><div class="small">wind left</div><div class="bar" style="height:8px"><span id="breath" style="background:var(--ok)"></span></div>'; setTerm('t-f','');}
+  else { $('fCtl').innerHTML='<span class="note">nothing to force yet</span>'; setTerm('t-f','locked'); }
+  $('conv').checked=true; $('convNote').textContent='';
+  field=L.field; $('field').value=field;
+  markTabs();
+  cv.style.cursor=L.terms.f?'crosshair':'default';
+}
+function buildCases(){ $('cases').innerHTML=LEVELS.map((L,i)=>'<button data-i="'+i+'">'+L.id+(best[L.id]?'<span class="st">'+'★'.repeat(best[L.id])+'</span>':'')+'</button>').join('')+'<button data-i="readme" class="how">How it works</button>';
+  document.querySelectorAll('#cases button').forEach(b=>b.onclick=()=>{ if(b.dataset.i==='readme')showReadme(true); else {showReadme(false); load(+b.dataset.i,true);} }); markTabs(); }
+function markTabs(){ const rm=!$('readme').hidden; document.querySelectorAll('#cases button').forEach(b=>b.setAttribute('aria-current', rm?(b.dataset.i==='readme'?'true':'false'):(b.dataset.i==String(li)?'true':'false'))); }
+function showReadme(on){ $('readme').hidden=!on; $('game').hidden=on; if(on){paused=true; $('pause').textContent='Resume'; scrollTo(0,0);} markTabs(); }
+
+function load(i,fresh){ const keep=!fresh&&G&&G.li===i; const prev=keep?{dp:$('dp')&&$('dp').value,nu:$('nu')&&$('nu').value,g:$('g')&&$('g').value,heat:$('heat')&&$('heat').value,conv:$('conv').checked}:null;
+  li=i; G=new Game(Sim,i,{leaves:LEAVES});
+  if(!keep){ setupUI(); } else { if(prev.dp&&$('dp'))$('dp').value=prev.dp; if(prev.nu&&$('nu'))$('nu').value=prev.nu; if(prev.g&&$('g')){$('g').value=prev.g;$('heat').value=prev.heat} $('conv').checked=prev.conv; }
+  markTabs();
+  readControls(); paused=true; $('pause').textContent='Resume'; showOver('<div style="font-family:var(--mono);font-size:12px;color:var(--muted)">'+G.L.path+'</div><h2>'+G.L.title+'</h2><p>'+G.L.brief+'</p><p>'+goalText()+' You have '+(G.L.T/100).toFixed(0)+' s of simulated time. The controls work while it runs, so watch the flow and adjust.</p><button class="btn" data-a="start">Start</button><button class="btn alt" data-a="readme">How it works</button>');
+  logLines=[]; t0=performance.now();
+  log('/*---------------------------------------------------------------------------*\\');
+  log('  =========                 |');
+  log('  \\\\      /  F ield         | foamFun: the birthday edition');
+  log('   \\\\    /   O peration     |');
+  log('    \\\\  /    A nd           | www.openfoam.com');
+  log('     \\\\/     M anipulation  |');
+  log('\\*---------------------------------------------------------------------------*/');
+  log('Case   : '+G.L.path);
+  log('Create mesh for time = 0'); log('Mesh: '+NX+' x '+NY+' cells, '+G.S.pcells.length+' in the fluid');
+  log(''); log('Starting time loop'); log('');
+  flushLog(); }
+
+// ---- log ----
+function log(s,c){ logLines.push(c?'<span class="'+c+'">'+esc(s)+'</span>':esc(s)); if(logLines.length>400)logLines.splice(0,logLines.length-400); }
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+function flushLog(){ const el=$('log'); el.innerHTML=logLines.join('\n'); el.scrollTop=el.scrollHeight; }
+
+// ---- rendering ----
+function render(){ const S=G.S, d=img.data, u=S.u, v=S.v, s=S.solid; let lo=0,hi=1;
+  if(field==='U'){hi=Math.max(0.3,(G.L.open?dpToU(G.dp,S.nu):0.35)*1.4); lo=0}
+  else if(field==='W'){hi=0.12; lo=-0.12}
+  else {hi=Math.max(0.05,S.Th||0.3); lo=0}
+  for(let j=0;j<NY;j++)for(let i=0;i<NX;i++){const k=i+j*NX, o=(i+(NY-1-j)*NX)*4;
+    if(s[k]){ const heat=S.heater[k]; let r=44,g=46,b=60; if(heat){r=150;g=70;b=40} else if(G.L.id==='autumn'&&j>0&&i>0&&i<NX-1){r=96;g=66;b=48} d[o]=r;d[o+1]=g;d[o+2]=b;d[o+3]=255;continue}
+    let val;
+    if(field==='U')val=Math.hypot(u[k],v[k]);
+    else if(field==='W'){ const e=(i>0&&i<NX-1&&j>0&&j<NY-1)?0.5*(v[k+1]-v[k-1]-u[k+NX]+u[k-NX]):0; val=e;}
+    else val=S.T[k];
+    let x=(val-lo)/(hi-lo); x=x<0?0:x>1?1:x; const c=(x*255|0)*3; d[o]=LUT[c];d[o+1]=LUT[c+1];d[o+2]=LUT[c+2];d[o+3]=255;}
+  // heater glow on the solid below the heater
+  octx.putImageData(img,0,0);
+  const W=cv.width,H=cv.height,sx=W/NX,sy=H/NY;
+  ctx.imageSmoothingEnabled=true; ctx.drawImage(off,0,0,W,H);
+  const X=x=>x*sx+sx/2, Y=y=>H-(y*sy+sy/2);
+  const L=G.L,t=L.target;
+  // target
+  if(t.mode!=='leaves'){ ctx.save(); ctx.setLineDash([7,5]); ctx.lineWidth=2; ctx.strokeStyle='rgba(242,193,78,.95)';
+    ctx.strokeRect(t.x0*sx,H-(t.y1+1)*sy,(t.x1-t.x0+1)*sx,(t.y1-t.y0+1)*sy); ctx.setLineDash([]);
+    ctx.fillStyle='rgba(242,193,78,.95)'; ctx.font='600 '+Math.max(12,sx*2.2)+'px "Source Sans 3",sans-serif';
+    ctx.fillText((t.mode==='hold'?'hold ':'')+G.count+' / '+t.need,t.x0*sx+6,H-(t.y1+1)*sy+Math.max(16,sx*3)); ctx.restore(); }
+  // nozzle
+  if(L.nozzle){ ctx.fillStyle='#f2c14e'; const n=L.nozzle; ctx.fillRect(X(n.x)-sx*1.5,Y(n.y+n.dy)-2,sx*1.2,(2*n.dy)*sy+4); }
+  // particles
+  const heavy=(L.settle||0)>0; ctx.fillStyle=heavy?(L.id==='hotRoom'?'rgba(236,205,150,.9)':'rgba(235,245,255,.92)'):'rgba(255,255,255,.85)';
+  const r=Math.max(1.4,sx*0.32);
+  ctx.beginPath(); for(let k=0;k<G.MAX;k++){ const st=G.st[k]; if(!st)continue; if(st===2&&((G.age[k]|0)&1))continue; const x=X(G.px[k]),y=Y(G.py[k]); ctx.moveTo(x+r,y); ctx.arc(x,y,r,0,6.2832);} ctx.fill();
+  // leaves
+  if(G.leaves){ const LC=['#e8a33d','#c9502b','#f0cf5a','#9a5a2c'];
+    for(const l of G.leaves){ const x=X(l.x), y=Y(l.y); ctx.save(); ctx.translate(x,y); ctx.rotate(l.on?(l.a*0.3+(reduce?0:0.15*Math.sin(G.step*0.05+l.a))):l.a);
+      ctx.fillStyle=LC[l.c]; ctx.beginPath(); ctx.ellipse(0,0,sx*1.35,sx*0.7,0,0,6.2832); ctx.fill();
+      ctx.strokeStyle='rgba(60,30,15,.55)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(-sx*1.3,0); ctx.lineTo(sx*1.3,0); ctx.stroke(); ctx.restore(); } }
+  // pointer
+  if(pointer.down&&L.terms.f){ ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(pointer.x*W,pointer.y*H,5*sx,0,6.3); ctx.stroke(); }
+  $('legLo').textContent=field==='U'?'0':field==='W'?'−ω':'T₀'; $('legHi').textContent=field==='U'?'|U| max':field==='W'?'+ω':'T₀+ΔT';
+}
+
+// ---- term bars ----
+const barEls={ddt:'#t-ddt .bar span',conv:'#t-conv .bar span',p:'#t-p .bar span',diff:'#t-nu .bar span',g:'#t-g .bar span',f:'#t-f .bar span'};
+const smooth={ddt:0,conv:0,p:0,diff:0,g:0,f:0};
+function bars(){ const m=G.S.mag; let mx=1e-9; for(const k in smooth){smooth[k]=smooth[k]*0.85+(m[k]||0)*0.15; mx=Math.max(mx,smooth[k])}
+  for(const k in barEls){ document.querySelector(barEls[k]).style.width=(100*smooth[k]/mx).toFixed(1)+'%'; } }
+
+// ---- pointer (force f) ----
+const pointer={down:false,x:0,y:0,px:0,py:0};
+function pos(e){const r=cv.getBoundingClientRect(); return [(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height]}
+cv.addEventListener('pointerdown',e=>{ if(!G||!G.L.terms.f)return; cv.setPointerCapture(e.pointerId); const [x,y]=pos(e); Object.assign(pointer,{down:true,x,y,px:x,py:y}); e.preventDefault(); });
+cv.addEventListener('pointermove',e=>{ if(!pointer.down)return; const [x,y]=pos(e); pointer.x=x; pointer.y=y; });
+['pointerup','pointercancel','pointerleave'].forEach(t=>cv.addEventListener(t,()=>{pointer.down=false}));
+
+// ---- overlays ----
+function starStr(n){return '★'.repeat(n)+'<span class="d">'+'★'.repeat(3-n)+'</span>'}
+function showOver(html){ $('card').innerHTML=html; $('over').classList.add('show'); const b=$('card').querySelector('button'); if(b)b.focus({preventScroll:true}); }
+function onEnd(){ const S=G.S,L=G.L;
+  if(G.state==='crash'){
+    log(''); log('--> FOAM FATAL ERROR: Courant Number max '+S.Co.toFixed(2)+' exceeds maxCo 2','e'); flushLog();
+    const trace=['#0  Foam::error::printStack(Foam::Ostream&) at ??:?','#1  Foam::sigFpe::sigHandler(int) at ??:?','#2  ? in /lib64/libc.so.6',
+      '#3  Foam::fvMatrix&lt;Foam::Vector&lt;double&gt;&gt;::solve(Foam::dictionary const&amp;) at ??:?',
+      L.id==='autumn'?'#4  Foam::autumn::shakeTree() at ??:?':'#4  Foam::pimpleControl::loop() at ??:?','#5  ? in '+L.id,'#6  __libc_start_main in /lib64/libc.so.6'];
+    showOver('<pre>'+trace.join('\n')+'\n<span class="e">Floating point exception (core dumped)</span></pre><p>The Courant number hit '+S.Co.toFixed(2)+'. '+(L.open?'Lower Δp or raise ν':L.terms.f?'Make the wind a little gentler':'Turn the heater down or raise ν')+', then restart.</p><button class="btn" data-a="retry">Restart case</button>');
+  } else if(G.state==='win'){
+    const n=G.stars(); if(!best[L.id]||best[L.id]<n){best[L.id]=n; try{localStorage.setItem('foamFun.best',JSON.stringify(best))}catch(e){} buildCases();}
+    log(''); log('End','g'); log(''); flushLog();
+    const last=li===LEVELS.length-1;
+    const head=last?(NAME?'Happy birthday, '+esc(NAME)+'!':'Wish granted. Happy birthday!'):'End';
+    const sub=last?G.count+' of '+G.need+' leaves down at t = '+(G.step/100).toFixed(2)+' s, using '+Math.round(G.breathUsed)+' units of wind.':'Converged at t = '+(G.step/100).toFixed(2)+' s of '+(L.T/100).toFixed(0)+' s.';
+    showOver('<h2>'+head+'</h2><div class="stars">'+starStr(n)+'</div><p>'+sub+'</p>'+(last?'<button class="btn" data-a="readme">How the flow is calculated</button><button class="btn alt" data-a="retry">Play again</button>':'<button class="btn" data-a="next">Next case</button><button class="btn alt" data-a="retry">Play again</button>'));
+  } else {
+    log(''); log('Reached endTime = '+(L.T/100).toFixed(0)+' s before the objective','w'); log('End'); flushLog();
+    showOver('<h2>endTime reached</h2><p>'+(L.target.mode==='leaves'?G.count+' of '+G.need+' leaves down.':'Got '+(L.target.mode==='hold'?G.best:G.count)+' of '+L.target.need+'.')+' '+hint()+'</p><button class="btn" data-a="retry">Restart case</button>');
+  }
+}
+function goalText(){const t=G.L.target; return t.mode==='leaves'?'Goal: at least '+Math.ceil(0.75*G.leaves.length)+' of '+G.leaves.length+' leaves off the tree (90% for two stars, all for three).':t.mode==='hold'?'Goal: '+t.need+' dye particles inside the dashed box at the same moment.':'Goal: '+t.need+' particles into the dashed box.';}
+function start(){ $('over').classList.remove('show'); paused=false; $('pause').textContent='Pause'; t0=performance.now(); }
+function hint(){ const L=G.L,S=G.S;
+  if(L.id==='pipeBucket')return G.count===0&&G.dp<0.06?'The drops land short: push a little harder.':'Check where the drops land and nudge Δp.';
+  if(L.id==='pitzDaily')return S.nu>0.04?'A viscous flow never curls into the step. Try a thinner fluid.':'Close. Try a different Δp.';
+  if(L.id==='cylinder')return !S.conv?'Without convection the wake stays perfectly symmetric.':S.nu>0.05?'The wake is too calm. Raise the Reynolds number.':'Close. Adjust the Reynolds number a touch.';
+  if(L.id==='hotRoom')return 'A stronger plume lifts more dust over the wall.';
+  return 'Short strong gusts right through the crown work better than a steady breeze.'; }
+$('card').addEventListener('click',e=>{ const a=e.target.dataset&&e.target.dataset.a; if(!a)return;
+  if(a==='retry')load(li,false); else if(a==='next')load(Math.min(li+1,LEVELS.length-1),true); else if(a==='first')load(0,true); else if(a==='readme')showReadme(true); else if(a==='start')start(); });
+
+// ---- controls ----
+$('conv').onchange=()=>{ readControls(); $('convNote').textContent=$('conv').checked?'':' Stokes flow'; };
+$('restart').onclick=()=>load(li,false);
+$('finish').onclick=()=>{ if(G&&G.state==='run'&&G.L.target.mode==='leaves'&&G.count>=0.75*G.need){G.state='win'; onEnd();} };
+$('pause').onclick=togglePause;
+function togglePause(){ if(G.state!=='run')return; if($('over').classList.contains('show')){start();return} paused=!paused; $('pause').textContent=paused?'Resume':'Pause'; }
+$('field').onchange=e=>{field=e.target.value};
+addEventListener('keydown',e=>{ if(!$('readme').hidden)return; if(e.target.tagName==='INPUT'&&e.target.type!=='range')return; if(e.code==='Space'&&e.target.tagName!=='BUTTON'&&e.target.tagName!=='SELECT'){e.preventDefault();togglePause()} if(e.key==='r'||e.key==='R')load(li,false); });
+
+// ---- main loop ----
+let frame=0;
+function loop(){ requestAnimationFrame(loop); if(!G)return;
+  if(!paused&&G.state==='run'){
+    if(pointer.down&&G.L.terms.f){ const dx=(pointer.x-pointer.px)*NX, dy=-(pointer.y-pointer.py)*NY; G.blow(pointer.x*NX,(1-pointer.y)*NY,dx,dy); pointer.px=pointer.x; pointer.py=pointer.y; }
+    G.update(); if(G.L.terms.f)G.decayForce(); frame++;
+    if(G.step%25===0){ const S=G.S, T=(G.step/100).toFixed(2);
+      log('Time = '+T); 
+      log('GAMG:  Solving for p, Initial residual = '+fmtE(Math.max(S.res0,1e-9))+', No Iterations '+(S.pit||20));
+      log('Courant Number mean: '+S.CoMean.toFixed(4)+' max: '+S.Co.toFixed(4), S.Co>1?'w':'');
+      log('ExecutionTime = '+((performance.now()-t0)/1000).toFixed(2)+' s'); log(''); flushLog(); }
+    if(G.state!=='run')onEnd(); }
+  labels(); render(); bars(); hud(); }
+function hud(){ const S=G.S,L=G.L;
+  $('hudL').textContent='Time = '+(G.step/100).toFixed(2)+' s / '+(L.T/100).toFixed(0)+' s    Co max '+S.Co.toFixed(2)+(L.open||L.terms.nu?'    Re ≈ '+G.Re:'');
+  $('hudR').textContent=paused?'paused':'';
+  const need=L.target.mode==='leaves'?G.need:L.target.need, have=L.target.mode==='hold'?G.count:G.count;
+  $('goal').textContent=L.target.mode==='leaves'?'Leaves down: '+G.count+' of '+G.need+(G.count>=0.75*G.need?', enough to win':''):L.target.mode==='hold'?'Dye in the bubble right now: '+G.count+' of '+need+' (best '+G.best+')':'Caught: '+G.count+' of '+need;
+  $('prog').style.width=Math.min(100,100*have/need)+'%';
+  const br=$('breath'); if(br)br.style.width=G.breath.toFixed(0)+'%';
+  const fin=$('finish'), can=L.target.mode==='leaves'&&G.state==='run'&&G.count>=0.75*G.need; if(fin.hidden===can)fin.hidden=!can; }
+
+buildCases(); load(0,true); $('backToGame').onclick=()=>{showReadme(false); load(li,true);}; requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
