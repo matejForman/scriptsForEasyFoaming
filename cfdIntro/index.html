@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Finite Volume Primer</title>
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <p class="kicker">OpenFOAM training · pre-read</p>
+  <h1>Finite volume CFD in OpenFOAM - quick introduction</h1>
+  <p class="lede">This is a short introduction to the finite volume method used in OpenFOAM. It does not serve as a comprehensive guide to CFD or OpenFOAM, but rather a quick overview of the main concepts. Please refer to the books suggested at the end of the page. There are five sections each dedicated to one the main concepts in Computational Fluid Dynamics. 
+  </p>
+  <p class="howto">Terms with a dotted underline open a short explanation. Boxes marked <b>In OpenFOAM</b> show where the idea lives in a case, and the links at the end of each chapter lead to the documentation and to books for the details this page skips.</p>
+
+   <p class="howto">All examples here are simplified java script computation to describe the basic idea. No OpenFOAM or any other CFD tool is involved.</p>
+
+</div></header>
+
+<nav class="nav" aria-label="Chapters"><div class="wrap" id="navlinks">
+  <a href="#map" data-ch="map"><b>0</b>Overview</a>
+  <a href="#equations" data-ch="equations"><b>1</b>Equations</a>
+  <a href="#fv" data-ch="fv"><b>2</b>Finite volumes</a>
+  <a href="#schemes" data-ch="schemes"><b>3</b>Schemes</a>
+  <a href="#solvers" data-ch="solvers"><b>4</b>Solvers</a>
+  <a href="#setup" data-ch="setup"><b>5</b>Case setup</a>
+</div></nav>
+<main class="wrap">
+<section class="chapter" id="map">
+  <div class="chap-head"><span class="num">0</span><h2>The whole picture</h2></div>
+  <div class="prose">
+    <p>A finite volume solver turns a set of partial differential equations into numbers representing the flow in four steps. Chapters 1 to 4 cover one step each, and chapter 5 shows where each choice is made in an OpenFOAM case.</p>
+  </div>
+  <ol class="path">
+    <li><a href="#equations"><b>1 · Equations</b><span class="tag">What do we solve?</span></br>
+      Which conservation laws are solved and what each term means physically. In the solver source every term is an operator such as <code>fvm::ddt</code>, <code>fvm::div</code>, <code>fvm::laplacian</code> or <code>fvc::grad</code>.</a></li>
+    <li><a href="#fv"><b>2 · Finite volumes</b><span class="tag">What is a finite volume?</span></br>
+      The mesh is split into cells. Integrating an equation over one cell turns derivatives into sums of fluxes through the cell faces.</a></li>
+    <li><a href="#schemes"><b>3 · Schemes</b><span class="tag">How are face values obtained?</span></br>
+      Fluxes need values on faces, but we only store values in cell centres. A scheme is the rule that interpolates between them.</a></li>
+    <li><a href="#solvers"><b>4 · Solvers</b><span class="tag">How is the system solved?</span></br>
+      One equation per cell gives a large sparse linear system <span class="m">A x = b</span>, which an iterative linear solver solves approximately.</a></li>
+    <li><a href="#setup"><b>5 · Case setup</b><span class="tag">Where do I set it?</span></br>
+      Which file and keyword controls which of the steps above.</a></li>
+  </ol>
+  <h3 style="margin:26px 0 8px;font-size:18px">Who is who in an OpenFOAM run</h3>
+  <p class="note" style="max-width:70ch;margin:0 0 10px">These are different kinds of things and live in different places. Mixing them up is the most common source of confusion for newcomers.</p>
+  <div class="tblwrap"><table class="tbl" style="background:var(--card);border:1px solid var(--line);border-radius:8px">
+    <thead><tr><th>Ingredient</th><th>What it is</th><th>Where it lives</th><th>Chapter</th></tr></thead>
+    <tbody>
+      <tr><td><b>Equation</b></td><td>The discretised terms of the PDE, written with operators <code>fvm::…</code> (implicit, go into the matrix) and <code>fvc::…</code> (explicit, evaluated from known fields)</td><td>C++ source of the solver, e.g. <code>UEqn.H</code></td><td>1</td></tr>
+      <tr><td><b>Mesh</b></td><td>Finite volume cells representing spatial discretisation. Gives each cell its volume <span class="m">V</span> and each face its area vector <span class="m">S<sub class="u">f</sub></span>. Every face has an <code>owner</code> cell; internal faces also have a <code>neighbour</code> cell.</td><td><code>constant/polyMesh</code></td><td>2</td></tr>
+      <tr><td><b>Fields</b></td><td>Typically cell values of <code>U</code>, <code>p</code>, <code>k</code>, … with their boundary conditions. Cell values are defined for a cell centre. The face flux <code>phi</code> is a surface field (one value per face), created and updated by the solver. It starts as the interpolated <code>U</code> dotted with the face area, and the pressure equation then keeps it conservative, so it is not simply the interpolated <code>U</code> and not something you set.</td><td>Start-time directory <code>0/</code> (and written time directories)</td><td>2</td></tr>
+      <tr><td><b>Discretisation schemes</b></td><td>Your choice of interpolation for each operator: how time derivatives, gradients, convection and diffusion terms are turned into face sums</td><td><code>system/fvSchemes</code> (<code>ddtSchemes</code>, <code>gradSchemes</code>, <code>divSchemes</code>, <code>laplacianSchemes</code>, …)</td><td>3</td></tr>
+      <tr><td><b>Linear solver</b></td><td>The iterative method and stopping criteria for the matrix <span class="m">A x = b</span> that one equation produces</td><td><code>system/fvSolution</code>, sub-dictionary <code>solvers</code>, one entry per field</td><td>4</td></tr>
+      <tr><td><b>Algorithm controls</b></td><td>How the equations are coupled and iterated (SIMPLE, PIMPLE), including under-relaxation</td><td><code>system/fvSolution</code>, e.g. <code>SIMPLE</code> and <code>relaxationFactors</code></td><td>5</td></tr>
+    </tbody></table></div>
+</section>
+
+<section class="chapter" id="equations">
+  <div class="chap-head"><span class="num">1</span><h2>Equations to solve</h2></div>
+  <div class="prose">
+    <p>Nearly every equation in a CFD solver is a variant of one template: the rate of change of a quantity <span class="m">φ</span> equals what is carried in by the flow, plus what diffuses, plus what is created.</p>
+  </div>
+  <div class="fig">
+    <h4>The generic transport equation. Click a term.</h4>
+    <div class="eqrow" role="group" aria-label="Transport equation terms">
+      <button class="tm" data-t="ddt">∂φ/∂t</button><span class="op">+</span>
+      <button class="tm" data-t="conv">∇·(<span class="u">U</span>φ)</button><span class="op">−</span>
+      <button class="tm" data-t="diff">∇·(Γ∇φ)</button><span class="op">=</span>
+      <button class="tm" data-t="src"><span class="m">S</span></button>
+    </div>
+    <div class="two">
+      <div>
+        <p class="eqlabel">Meaning</p>
+        <div id="eqdetail" class="prose" aria-live="polite"></div>
+      </div>
+      <div>
+        <p class="eqlabel">The same line in OpenFOAM (simplified)</p>
+        <pre class="code" id="eqcode"><span class="cl" data-t="ddt">    fvm::ddt(phi)</span><span class="cl" data-t="conv">  + fvm::div(flux, phi)</span><span class="cl" data-t="diff">  - fvm::laplacian(Gamma, phi)</span><span class="cl" data-t="src"> ==  S</span></pre>
+      </div>
+    </div>
+  </div>
+  <div class="prose">
+    <h3>Momentum and continuity (incompressible)</h3>
+    <p>Setting <span class="m">φ = <span class="u">U</span></span>, <span class="m">Γ = ν<sub class="u">eff</sub></span> and adding the pressure gradient as the source gives the momentum equation. With kinematic pressure <span class="m">p</span> (divided by density), as OpenFOAM does it:</p>
+  </div>
+  <div class="mathblock">∂<b>U</b>/∂t + ∇·(<b>U</b><b>U</b>) − ∇·(ν<sub>eff</sub>∇<b>U</b>) = −∇p<br>∇·<b>U</b> = 0<small>ν<sub>eff</sub> = ν + ν<sub>t</sub> when a turbulence model is active. The extra transpose term of the stress is handled explicitly and omitted here.</small></div>
+  <div class="prose">
+    <p>The unknowns are <b>U</b> and <i>p</i>, but there is no evolution equation for <i>p</i>. Continuity is a constraint, and the pressure adjusts so that the velocity field stays divergence-free. Solvers such as <code>simpleFoam</code> and <code>pimpleFoam</code> combine the two into a <button class="term" data-g="pressureeq">pressure equation</button>, which is a <i>Poisson</i> problem and usually the most expensive linear system of the run.</p>
+  </div>
+  <div class="fig">
+    <h4>Momentum equation, schematically</h4>
+    <pre class="code"><span class="cl">tmp&lt;fvVectorMatrix&gt; tUEqn
+(
+    <button class="kw" data-g="fvm">fvm</button>::ddt(U)                 <span class="c">// ∂U/∂t     implicit</span>
+  + <button class="kw" data-g="fvm">fvm</button>::div(phi, U)            <span class="c">// ∇·(UU)     implicit, phi = face flux</span>
+  - <button class="kw" data-g="fvm">fvm</button>::laplacian(nuEff, U)     <span class="c">// ∇·(ν∇U)    implicit</span>
+ ==
+  - <button class="kw" data-g="fvc">fvc</button>::grad(p)                 <span class="c">// −∇p        explicit, from the latest p</span>
+);</pre>
+    <p class="cap"><b>fvm</b> terms go into the matrix and are solved for; <b>fvc</b> terms are evaluated from known values and end up on the right-hand side. Chapter 4 shows what that means for the matrix.</p>
+  </div>
+  <div class="fig">
+    <h4>The same equation in real solver source (simpleFoam, <code>UEqn.H</code>, abridged)</h4>
+    <pre class="code">tmp&lt;fvVectorMatrix&gt; tUEqn
+(
+    fvm::div(phi, U)                 <span class="c">// ∇·(UU)   convection, implicit; phi is the face flux</span>
+  + MRF.DDt(U)                       <span class="c">// rotating-frame terms (zero without MRF)</span>
+  + turbulence-&gt;divDevReff(U)       <span class="c">// −∇·(ν_eff ∇U) and the transposed-gradient part, implicit/explicit split inside</span>
+ ==
+    fvOptions(U)                     <span class="c">// optional user-defined sources</span>
+);
+fvVectorMatrix&amp; UEqn = tUEqn.ref();
+
+UEqn.relax();                        <span class="c">// under-relaxation, factor from fvSolution</span>
+fvOptions.constrain(UEqn);
+
+if (simple.momentumPredictor())
+{
+    solve(UEqn == -fvc::grad(p));    <span class="c">// pressure gradient from the latest p, explicit</span>
+    fvOptions.correct(U);
+}</pre>
+    <p class="cap">Differences from the schematic: simpleFoam is steady, so there is no <code>ddt</code> term. The viscous term is hidden inside the turbulence model (<code>divDevReff</code>), so laminar and turbulent runs share the same line. <code>solve(…)</code> assembles the matrix and hands it to the linear solver of chapter 4. Source details change between versions; check <code>UEqn.H</code> in your installation under <code>$FOAM_SOLVERS/incompressible/simpleFoam</code>.</p>
+  </div>
+  <div class="deeper"><h4>Go deeper</h4><ul>
+    <li><a href="https://doc.openfoam.com/2606/tools/processing/numerics/schemes/" target="_blank" rel="noopener">OpenFOAM documentation: numerical schemes</a></li>
+    <li>Versteeg &amp; Malalasekera, <i>An Introduction to Computational Fluid Dynamics</i>: the general transport equation</li>
+    <li>Moukalled, Mangani, Darwish, <i>The Finite Volume Method in CFD: An Advanced Introduction with OpenFOAM and Matlab</i></li>
+  </ul></div>
+</section>
+<section class="chapter" id="fv">
+  <div class="chap-head"><span class="num">2</span><h2>The finite volume idea</h2></div>
+  <div class="prose">
+    <p>Split the domain into small cells. For one cell of volume <span class="m">V</span>, integrate the transport equation over it and apply the <button class="term" data-g="gauss">Gauss (divergence) theorem</button> to turn volume integrals of divergences into sums over the cell faces:</p>
+  </div>
+  <div class="mathblock">∫<sub>V</sub> ∇·<b>J</b> dV = ∮<sub>∂V</sub> <b>J</b>·d<b>S</b> ≈ Σ<sub>f</sub> <b>J</b><sub>f</sub>·<b>S</b><sub>f</sub><small>J is the flux vector: U φ for convection or Γ∇φ for diffusion. S<sub>f</sub> is the face area vector pointing out of the cell.</small></div>
+  <div class="prose">
+    <p>Three consequences are worth keeping in mind:</p>
+    <ul>
+      <li><b>Conservation is built in.</b> What leaves one cell through a face enters its neighbour through the same face with the same value, so nothing is created or lost between cells.</li>
+      <li><b>Unknowns are cell averages</b> stored at the cell centre (<button class="term" data-g="collocated">collocated</button> arrangement). Everything else (face values, gradients) is reconstructed from them.</li>
+      <li><b>The face flux</b> <span class="m">F<sub class="u">f</sub> = <b class="u">S</b><sub class="u">f</sub>·<b class="u">U</b><sub class="u">f</sub></span> (called <code>phi</code> in OpenFOAM, volumetric in m³/s for incompressible flow) is a single number per face. Do not confuse it with the transported quantity <span class="m">φ</span>. Continuity says that for every cell <span class="m">Σ<sub class="u">f</sub> F<sub class="u">f</sub> = 0</span>.</li>
+    </ul>
+  </div>
+
+  <div class="fig" id="fig-fv">
+    <h4>How well do cells represent a field?</h4>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="duct">A · Duct along the flow</button>
+      <button role="tab" aria-selected="false" data-tab="chan">B · Channel across the flow</button>
+    </div>
+
+    <div class="panel" id="p-duct">
+      <p class="note" style="margin:0 0 12px;max-width:80ch">A duct with a smooth area change, <span class="m">A(x) = 0.75 + 0.25 cos 2πx</span>, carries steady incompressible flow with <span class="m">Q = 1 m³/s</span>. Velocity <span class="m">u = Q/A</span> and the Bernoulli pressure follow from the area, so we know the exact fields. The figure shows what cell averages make of them. It is a <i>representation</i> test, not a solver run.</p>
+      <div class="ctl-row">
+        <div class="ctl"><label for="dN">Cells</label><input id="dN" type="range" min="3" max="64" value="8"><output id="dNo">8</output></div>
+        <div class="ctl"><span class="lab">Field</span><div class="seg" id="dField"><button aria-pressed="true" data-v="u">velocity u</button><button aria-pressed="false" data-v="p">pressure p</button><button aria-pressed="false" data-v="g">dp/dx</button></div></div>
+        <div class="ctl"><span class="lab">Face flux</span><div class="seg" id="dFlux"><button aria-pressed="false" data-v="ex">exact</button><button aria-pressed="true" data-v="int">interpolated</button></div></div>
+      </div>
+      <canvas id="cvDuct" class="cv-click" width="1000" height="470" role="img" aria-label="Duct with cells and the exact versus cell-averaged field"></canvas>
+      <div class="rd">
+        <div class="card"><h5>Selected cell <span id="dSelName"></span></h5><dl class="kv" id="dInsp"></dl></div>
+        <div class="card"><h5>Error of the cell values</h5><dl class="kv" id="dErr"></dl><p class="note" style="margin:8px 0 0" id="dErrNote"></p></div>
+      </div>
+      <div class="deeper" style="max-width:none"><h4>How to read the errors</h4><ul>
+        <li><b>Cell value</b>: what the method stores, the volume average of the exact field over the cell.</li>
+        <li><b>Error</b>: cell value minus the exact value at the cell centre, in the units of the plotted field. It is not a solver error. Even a perfect average differs from the centre value wherever the field curves. The difference is second order in Δx (about <span class="m">Δx² f″/24</span> for a constant cross-section; here the average is also weighted by the duct area).</li>
+        <li><b>Interior vs end cells</b>: end cells use the boundary face value instead of an average of two neighbours, so they converge more slowly in <i>dp/dx</i>.</li>
+        <li><b>Ratio to previous</b>: error on the coarser mesh (half the cells) divided by error on this mesh. A ratio near 4 means error ∝ Δx², second-order. Near 2 means first-order. Near 1 means the mesh is still too coarse to see the trend.</li>
+        <li><b>max |ΣF|</b>: the largest net face-flux imbalance of any cell, in m³/s. Continuity demands zero. With exact fluxes it is zero to round-off; with fluxes interpolated from cell values it is small but non-zero and shrinks as Δx². In OpenFOAM the flux <code>phi</code> is therefore not just the interpolated velocity: it is a separate field that the pressure equation makes conservative, while the interpolated cell velocities satisfy continuity only to this accuracy.</li>
+      </ul></div>
+      <div class="tblwrap"><table class="tbl" id="dTbl"><thead><tr><th>cells</th><th>max error, interior cells</th><th>ratio to previous</th><th>max error, end cells</th><th>ratio</th></tr></thead><tbody></tbody></table></div>
+      <p class="cap">Click a cell to inspect it. Blue arrows are the face fluxes <span class="m">F<sub>f</sub> = u<sub>f</sub> A<sub>f</sub></span> (<code>phi</code>). With exact fluxes every cell balances to zero. Interpolating <i>u</i> to the faces from the cell values leaves a small imbalance, which shrinks with the cell count. A real solver does not rely on interpolated velocities for conservation: the pressure equation delivers conservative face fluxes directly.</p>
+    </div>
+
+    <div class="panel" id="p-chan" hidden>
+      <p class="note" style="margin:0 0 12px;max-width:80ch">Plane Poiseuille flow between two walls (gap <span class="m">H = 20 mm</span>, mean velocity <span class="m">0.15 m/s</span>) has a parabolic profile. The cells now stack <i>across</i> the flow, which is how a boundary layer is resolved. Cell values are exact averages of the parabola.</p>
+      <div class="ctl-row">
+        <div class="ctl"><label for="cN">Cells across the gap</label><input id="cN" type="range" min="2" max="30" value="5"><output id="cNo">5</output></div>
+      </div>
+      <canvas id="cvChan" width="1000" height="420" role="img" aria-label="Parabolic velocity profile and cell values across a channel"></canvas>
+      <div class="rd">
+        <div class="card"><h5>Gradient in the bulk</h5><dl class="kv" id="cBulk"></dl></div>
+        <div class="card"><h5>Wall shear gradient du/dy</h5><dl class="kv" id="cWall"></dl></div>
+      </div>
+      <p class="cap">Inside the domain, the central difference of two neighbouring cell averages hits the exact gradient of a parabola at the shared face. At the wall there is no neighbour: the gradient is taken as <span class="m">u<sub>P</sub>/(Δy/2)</span>, which is only first-order accurate. That is why wall-resolving meshes need thin first cells, and why this error drives the wall-shear and heat-transfer accuracy.</p>
+    </div>
+  </div>
+
+  <div class="inof"><h4>In OpenFOAM</h4>
+    <p><b>Mesh</b>: <code>constant/polyMesh</code> stores faces with their <code>owner</code> and <code>neighbour</code> cells, from which V and S<sub>f</sub> follow.</p>
+    <p><b>Face flux</b>: <code>phi</code> is a <code>surfaceScalarField</code> (one value per face) that the solver computes from <code>U</code>.</p>
+    <p><b>Face sum</b>: the choice of how the sum is formed is made in <code>system/fvSchemes</code> by the keyword <code>Gauss</code>, e.g. <code>gradSchemes { default Gauss linear; }</code>. The interpolation named after it is the topic of the next chapter.</p></div>
+  <div class="deeper"><h4>Go deeper</h4><ul>
+    <li><a href="https://doc.openfoam.com/2606/tools/processing/numerics/schemes/" target="_blank" rel="noopener">OpenFOAM documentation: schemes overview</a>, including gradient schemes</li>
+    <li>Moukalled et al., finite volume discretisation chapters (diffusion, convection)</li>
+    <li>Patankar, <i>Numerical Heat Transfer and Fluid Flow</i>, the classic source of the control-volume formulation</li>
+    <li>Ferziger &amp; Perić, <i>Computational Methods for Fluid Dynamics</i>, the finite volume chapters</li>
+    <li>Jasak, PhD thesis (Imperial College, 1996): the error analysis behind OpenFOAM's discretisation</li>
+  </ul></div>
+</section>
+
+<section class="chapter" id="schemes">
+  <div class="chap-head"><span class="num">3</span><h2>Spatial discretisation: choosing the face value</h2></div>
+  <div class="prose">
+    <p>The convective flux through a face needs <span class="m">φ<sub class="u">f</sub></span>, but we only store cell centres. How we guess the face value is the <button class="term" data-g="scheme">scheme</button>. Three are enough to see the trade-off.</p>
+    <ul>
+      <li><button class="term" data-g="upwind">upwind</button>: take the value from the upstream cell. First-order accurate, always bounded, but smears gradients.</li>
+      <li><button class="term" data-g="linear">linear</button> (central differencing): average of the two cells. Second-order accurate, but can produce oscillations.</li>
+      <li><button class="term" data-g="linearUpwind">linearUpwind</button>: upwind value plus a gradient-based correction. Second-order, usually a good default for steady RANS.</li>
+    </ul>
+  </div>
+    <div class="fig" style="margin-top:6px"><h4>How the face value is formed between neighbouring cells</h4>
+      <div class="schemrow" id="schemSketch"></div>
+      <p class="cap">Flow goes from left to right through the face f between cell P (upstream of the face) and cell E. Cell W lies further upstream and matters only for linearUpwind. The solid ring on the dashed face line is the face value φ<sub>f</sub> that enters the flux <span class="m">F<sub>f</sub> φ<sub>f</sub></span>.</p></div>
+  <div class="prose">
+    <p>The test case is the steady 1D convection–diffusion equation <span class="m">u φ′ = Γ φ″</span> on <span class="m">0 ≤ x ≤ 1</span> with <span class="m">φ(0)=0</span>, <span class="m">φ(1)=1</span>. The exact solution is flat and then rises sharply at the outlet when convection dominates, a thin boundary layer, which is a harsh test for any scheme. The control parameter is the <button class="term" data-g="peclet">Péclet number</button> <span class="m">Pe = uL/Γ</span>.</p>
+  </div>
+  <div class="fig" id="fig-sch">
+    <div class="ctl-row">
+      <div class="ctl"><label for="sPe">Pe</label><input id="sPe" type="range" min="0" max="1000" value="818"><output id="sPeo">50</output></div>
+      <div class="ctl"><label for="sN">Cells</label><input id="sN" type="range" min="4" max="60" value="12"><output id="sNo">12</output></div>
+      <div class="ctl"><span class="lab">Show</span><div class="seg" id="sSch"><button aria-pressed="true" data-v="upwind">upwind</button><button aria-pressed="true" data-v="linear">linear</button><button aria-pressed="true" data-v="linearUpwind">linearUpwind</button></div></div>
+    </div>
+    <canvas id="cvSch" width="1000" height="440" role="img" aria-label="Exact and discrete solutions of 1D convection-diffusion for three schemes"></canvas>
+    <div class="rd">
+      <div class="card"><h5>Cell Péclet number</h5><p style="margin:0" id="sPec"></p></div>
+      <div class="card"><h5>Upwind = central + numerical diffusion</h5><p style="margin:0" id="sNumD"></p></div>
+    </div>
+    <div class="tblwrap"><table class="tbl" id="sTbl"><thead><tr><th>scheme</th><th>max error vs exact cell average</th><th>overshoot / undershoot</th><th>verdict</th></tr></thead><tbody></tbody></table></div>
+    <p class="cap">The cell Péclet number <span class="m">Pe<sub>Δ</sub> = uΔx/Γ</span> is what the scheme actually sees. For <span class="m">Pe<sub>Δ</sub> &gt; 2</span> the linear scheme loses its monotone behaviour (the off-diagonal coefficient changes sign). Upwind avoids this by acting like extra diffusion <span class="m">Γ<sub>num</sub> = uΔx/2</span>, so the solution stays bounded but the layer is smeared. Refine the mesh and watch each scheme approach the exact curve at its own rate. Thin black bars are the cell averages of the exact solution, which is what a finite volume value should be compared with. A good part of the trouble in the last cell comes from forcing a fixed value on an outflow boundary at high Péclet number. That is why outlets in practice usually get <code>zeroGradient</code> or <code>inletOutlet</code> rather than <code>fixedValue</code>. In this demo the upwind-type schemes take their own face value at the outlet, as textbooks do; OpenFOAM would use the patch value on a <code>fixedValue</code> patch.</p>
+  </div>
+  <div class="inof"><h4>In OpenFOAM</h4><p><code>divSchemes { div(phi,U) bounded Gauss linearUpwind grad(U); div(phi,k) bounded Gauss upwind; }</code>. The implicit matrix always uses the upwind coefficients for <code>linearUpwind</code>; the gradient correction is added to the right-hand side explicitly (<i>deferred correction</i>), which keeps the matrix diagonally dominant.</p></div>
+  <div class="deeper"><h4>Go deeper</h4><ul>
+    <li><a href="https://doc.openfoam.com/2606/tools/processing/numerics/schemes/divergence/rtm/upwind/" target="_blank" rel="noopener">upwind</a>, <a href="https://doc.openfoam.com/2606/tools/processing/numerics/schemes/divergence/rtm/linear/" target="_blank" rel="noopener">linear</a>, <a href="https://doc.openfoam.com/2606/tools/processing/numerics/schemes/divergence/rtm/linearUpwind/" target="_blank" rel="noopener">linearUpwind</a> in the OpenFOAM documentation</li>
+    <li>Limited schemes for bounded 2nd-order behaviour: <a href="https://doc.openfoam.com/2606/tools/processing/numerics/schemes/divergence/rtm/limitedLinear/" target="_blank" rel="noopener">limitedLinear</a>, <a href="https://doc.openfoam.com/2606/tools/processing/numerics/schemes/divergence/rtm/vanLeer/" target="_blank" rel="noopener">vanLeer</a></li>
+    <li>Patankar, the sections on the convection–diffusion problem and the power-law scheme; Ferziger &amp; Perić, <i>Computational Methods for Fluid Dynamics</i></li>
+  </ul></div>
+</section>
+<section class="chapter" id="solvers">
+  <div class="chap-head"><span class="num">4</span><h2>Algebraic solvers</h2></div>
+  <div class="prose">
+    <h3>4.1 Where the matrix comes from</h3>
+    <p>Write the discretised equation for cell <i>P</i>: its unknown multiplied by a coefficient, plus each neighbour's unknown times a coefficient, equals a known right-hand side.</p>
+  </div>
+  <div class="mathblock">a<sub>P</sub> φ<sub>P</sub> + Σ<sub>N</sub> a<sub>N</sub> φ<sub>N</sub> = b<sub>P</sub><small>One such row per cell stacks into A φ = b. A is square, sparse (only face neighbours are non-zero) and has one row per cell.</small></div>
+  <div class="prose"><p>In a 1D line of cells numbered left to right, cell <i>P</i> has a west neighbour <i>W</i> and an east neighbour <i>E</i>, and the sum has just two terms:</p></div>
+  <div class="fig"><div id="wpeSketch"></div>
+    <p class="cap">The coefficient of the cell itself, <span class="m">a<sub>P</sub></span>, sits on the matrix diagonal. The west neighbour has a lower index, so <span class="m">a<sub>W</sub></span> is left of the diagonal (lower triangle); <span class="m">a<sub>E</sub></span> is right of it (upper triangle). Colours match the matrix below. The coefficients collect what the two faces <i>w</i> and <i>e</i> contribute: face flux and diffusion across each.</p></div>
+  <div class="prose">
+    <p>The diagonal <span class="m">a<sub class="u">P</sub></span> collects contributions from all faces of the cell, the off-diagonals <span class="m">a<sub class="u">N</sub></span> one per neighbour. Pick a discretisation below and click a row to see how it is assembled.</p>
+  </div>
+  <div class="fig" id="fig-mx">
+    <h4>Matrix assembly</h4>
+    <div class="ctl-row">
+      <div class="ctl"><span class="lab">Mesh</span><div class="seg" id="mxMode"><button aria-pressed="true" data-v="1d">1D line</button><button aria-pressed="false" data-v="2d">2D 5×4</button></div></div>
+      <div class="ctl"><span class="lab">Terms</span><div class="seg" id="mxSch"><button aria-pressed="true" data-v="diff">diffusion only</button><button aria-pressed="false" data-v="upwind">+ upwind</button><button aria-pressed="false" data-v="linear">+ linear</button><button aria-pressed="false" data-v="linearUpwind">+ linearUpwind</button></div></div>
+      <div class="ctl" id="mxNwrap"><label for="mxN">Cells</label><input id="mxN" type="range" min="4" max="12" value="6"><output id="mxNo">6</output></div>
+    </div>
+    <svg class="mesh" id="mxMesh" role="img" aria-label="Mesh with selected cell and its neighbours"></svg>
+    <div class="matgrid">
+      <div><div class="matscroll" id="mxTbl"></div>
+        <div class="legend"><span><i style="background:var(--blue-t)"></i>diagonal</span><span><i style="background:var(--amber-t)"></i>upper (neighbour index &gt; row)</span><span><i style="background:var(--green-t)"></i>lower</span><span><i style="background:#fff;border:1px solid var(--line)"></i>right-hand side</span></div>
+      </div>
+      <div class="insp" id="mxInsp"></div>
+    </div>
+    <p class="cap">Diffusion alone gives a symmetric matrix with a positive diagonal and negative off-diagonals. (This is the sign of −∇·(Γ∇φ), the way the term enters the equation; <code>fvm::laplacian</code> on its own has the opposite signs.) Convection breaks the symmetry. A positive off-diagonal (red) is the algebraic signature of the unbounded behaviour from chapter 3. For linearUpwind the matrix shown is the upwind one; the gradient correction sits in the right-hand side.</p>
+  </div>
+  <div class="inof"><h4>In OpenFOAM</h4><p>The matrix is stored in <i>LDU</i> format, not as a table: <code>diag()</code> (one value per cell), <code>upper()</code> and <code>lower()</code> (one value per internal face), addressed through <code>owner</code> and <code>neighbour</code>. A symmetric matrix stores only <code>upper</code>. The symmetry matters for the choice in <code>fvSolution</code>: PCG works only for symmetric matrices (pressure), PBiCG is its counterpart for asymmetric ones, and PBiCGStab, smoothSolver and GAMG handle both.</p></div>
+
+  <div class="prose">
+    <h3>4.2 Solving it: three basic ideas</h3>
+    <ul>
+      <li><button class="term" data-g="smoothSolver">smoothSolver</button> (Gauss–Seidel): sweep through cells and update each from its neighbours' latest values. Cheap per sweep, removes local (high-frequency) error fast, but long-wave error decays very slowly on fine meshes.</li>
+      <li><button class="term" data-g="pcg">PCG</button> (conjugate gradient, with a preconditioner such as DIC): for symmetric matrices. Each iteration picks a search direction that does not undo earlier progress. Iterations grow roughly with the mesh size in one direction.</li>
+      <li><button class="term" data-g="gamg">GAMG</button> (geometric-algebraic multigrid): smooth on the fine mesh, correct the smooth remaining error on a coarser mesh where it looks short-wave, and repeat down to a few cells. Iteration count stays nearly independent of mesh size.</li>
+    </ul>
+    <p>The demo solves the 2D Poisson equation <span class="m">−∇²φ = 1</span> with <span class="m">φ = 0</span> on all walls, the same structure as the pressure equation. Pick a solver and mesh size, then step through or run to convergence.</p>
+  </div>
+  <div class="fig" id="fig-sv">
+    <div class="ctl-row">
+      <div class="ctl"><label for="svS">Solver</label><select id="svS"><option value="gs">smoothSolver (GaussSeidel)</option><option value="pcg" selected>PCG (DIC)</option><option value="gamg">GAMG</option></select></div>
+      <div class="ctl"><label for="svN">Mesh</label><select id="svN"><option value="16">16×16</option><option value="32" selected>32×32</option><option value="64">64×64</option></select></div>
+      <div class="ctl"><label for="svI">Initial guess</label><select id="svI"><option value="zero">zero</option><option value="rand">random</option></select></div>
+    </div>
+    <div class="ctl-row">
+      <div class="ctl"><label for="svT">tolerance</label><select id="svT"><option value="1e-4">1e-4</option><option value="1e-6" selected>1e-6</option><option value="1e-8">1e-8</option></select></div>
+      <div class="ctl"><label for="svR">relTol</label><select id="svR"><option value="0">0</option><option value="0.01">0.01</option><option value="0.1">0.1</option></select></div>
+      <div class="ctl"><label for="svM">maxIter</label><select id="svM"><option value="100">100</option><option value="1000" selected>1000</option><option value="10000">10000</option></select></div>
+      <button class="btn" id="svStep">Step</button><button class="btn" id="svStep10">×10</button><button class="btn primary" id="svRun">Run to tolerance</button><button class="btn" id="svReset">Reset</button><button class="btn" id="svCmp">Compare all three</button>
+    </div>
+    <div class="solvgrid">
+      <div>
+        <canvas id="cvErr" width="420" height="420" role="img" aria-label="Error field heat map"></canvas>
+        <p class="note" style="margin:6px 0 0">Error <span class="m">φ − φ<sub>exact</sub></span> (red positive, blue negative, scaled to its own maximum). Watch how fast each solver removes long-wave error.</p>
+      </div>
+      <div>
+        <canvas id="cvRes" width="640" height="420" role="img" aria-label="Residual history, log scale"></canvas>
+      </div>
+    </div>
+    <pre class="log" id="svLog" aria-live="polite"></pre>
+    <div class="tblwrap" id="svCmpWrap" hidden><table class="tbl" id="svTbl"><thead><tr><th>solver</th><th>mesh</th><th>iterations</th><th>final residual</th><th>time in your browser</th></tr></thead><tbody></tbody></table></div>
+    <p class="cap">Typical result: Gauss–Seidel needs iterations ∝ n², PCG ∝ n, GAMG roughly constant. Compare at 16, 32 and 64. Times are indicative only: they come from a simplified JavaScript implementation, not from OpenFOAM. The residual is normalised as OpenFOAM does it, and a solve stops when it falls below <code>tolerance</code>, drops by <code>relTol</code> relative to the initial residual, or reaches <code>maxIter</code>.</p>
+    <details class="adv" id="gamgAdv">
+      <summary>Advanced: what GAMG does on the coarse meshes (V-cycle)</summary>
+      <div class="advbody">
+        <p class="note" style="max-width:70ch">One V-cycle on the selected mesh: smooth, compute the residual, restrict it to a mesh with four times fewer cells, repeat until a handful of cells remain, solve that exactly, then interpolate corrections back up and smooth again. This is a simplified <i>geometric</i> version; OpenFOAM builds its coarse levels algebraically by agglomerating neighbouring cells (<code>faceAreaPair</code>, <code>nCellsInCoarsestLevel</code>).</p>
+        <div class="ctl-row"><button class="btn" id="vcPrev">◀ Previous</button><button class="btn primary" id="vcNext">Next ▶</button><span class="note" id="vcLabel"></span></div>
+        <div class="vgrid" id="vcGrid"></div>
+      </div>
+    </details>
+  </div>
+  <div class="inof"><h4>In OpenFOAM</h4><p>Each linear solve prints one line: <code>DICPCG: Solving for p, Initial residual = 0.0123, Final residual = 1.1e-04, No Iterations 18</code>. The <b>Initial residual</b> tells how far the field was from satisfying its equation before the solve; it is the number to watch for convergence of the whole run. The <b>Final residual</b> is where the linear solver stopped, governed by <code>tolerance</code> and <code>relTol</code> in <code>fvSolution</code>.</p></div>
+  <div class="deeper"><h4>Go deeper</h4><ul>
+    <li><a href="https://doc.openfoam.com/2606/tools/processing/numerics/solvers/" target="_blank" rel="noopener">Linear solvers overview</a>, <a href="https://doc.openfoam.com/2606/tools/processing/numerics/solvers/smooth/" target="_blank" rel="noopener">smooth</a>, <a href="https://doc.openfoam.com/2606/tools/processing/numerics/solvers/cg/" target="_blank" rel="noopener">CG</a>, <a href="https://doc.openfoam.com/2606/tools/processing/numerics/solvers/multigrid/" target="_blank" rel="noopener">multigrid</a>, <a href="https://doc.openfoam.com/2606/tools/processing/numerics/solvers/residuals/" target="_blank" rel="noopener">residuals</a></li>
+    <li>Briggs, Henson, McCormick, <i>A Multigrid Tutorial</i></li>
+    <li>Shewchuk, <i>An Introduction to the Conjugate Gradient Method Without the Agonizing Pain</i></li>
+    <li>Saad, <i>Iterative Methods for Sparse Linear Systems</i></li>
+  </ul></div>
+</section>
+
+<section class="chapter" id="setup">
+  <div class="chap-head"><span class="num">5</span><h2>Mapping it to an OpenFOAM case</h2></div>
+  <div class="prose">
+    <p>Every choice from the previous chapters has a home in one of two dictionaries. Click any highlighted keyword.</p>
+    <ul>
+      <li>An equation term such as <code>fvm::div(phi, U)</code> or <code>fvc::grad(p)</code> is written in the solver source. How it is discretised is selected in <code>system/fvSchemes</code>, in the sub-dictionary that matches the operator (<code>divSchemes</code>, <code>gradSchemes</code>, …) and, for <code>div</code> and <code>grad</code>, by the name of the term, e.g. <code>div(phi,U)</code>.</li>
+      <li>The resulting matrix is solved with the method set in <code>system/fvSolution</code> under <code>solvers</code>, keyed by field name. The same file holds the algorithm controls (<code>SIMPLE</code>, <code>PIMPLE</code>) and <code>relaxationFactors</code>.</li>
+    </ul>
+  </div>
+  <div class="two">
+    <div class="fig" style="margin-top:12px"><h4>system/fvSchemes</h4>
+<pre class="code"><button class="kw" data-g="ddtSchemes">ddtSchemes</button>
+{
+    default         <button class="kw" data-g="steadyState">steadyState</button>;
+}
+<button class="kw" data-g="gradSchemes">gradSchemes</button>
+{
+    default         <button class="kw" data-g="Gauss">Gauss</button> <button class="kw" data-g="linear">linear</button>;
+}
+<button class="kw" data-g="divSchemes">divSchemes</button>
+{
+    default         none;
+    div(phi,U)      <button class="kw" data-g="bounded">bounded</button> Gauss <button class="kw" data-g="linearUpwind">linearUpwind</button> grad(U);
+    div(phi,k)      bounded Gauss <button class="kw" data-g="upwind">upwind</button>;
+    div((nuEff*dev2(T(grad(U))))) Gauss linear;
+}
+<button class="kw" data-g="laplacianSchemes">laplacianSchemes</button>
+{
+    default         Gauss linear <button class="kw" data-g="corrected">corrected</button>;
+}
+<button class="kw" data-g="interpolationSchemes">interpolationSchemes</button>
+{
+    default         linear;
+}
+<button class="kw" data-g="snGradSchemes">snGradSchemes</button>
+{
+    default         corrected;
+}</pre></div>
+    <div class="fig" style="margin-top:12px"><h4>system/fvSolution</h4>
+<pre class="code"><button class="kw" data-g="solvers">solvers</button>
+{
+    p
+    {
+        solver          <button class="kw" data-g="gamg">GAMG</button>;
+        smoother        <button class="kw" data-g="gaussSeidel">GaussSeidel</button>;
+        tolerance       <button class="kw" data-g="tolerance">1e-06</button>;
+        relTol          <button class="kw" data-g="relTol">0.1</button>;
+    }
+    U
+    {
+        solver          <button class="kw" data-g="smoothSolver">smoothSolver</button>;
+        smoother        symGaussSeidel;
+        tolerance       1e-06;
+        relTol          0.1;
+    }
+}
+<button class="kw" data-g="SIMPLE">SIMPLE</button>
+{
+    nNonOrthogonalCorrectors 0;
+    <button class="kw" data-g="consistent">consistent</button>       yes;
+}
+<button class="kw" data-g="relaxationFactors">relaxationFactors</button>
+{
+    equations { U 0.9; }
+}</pre></div>
+  </div>
+  <div class="note" style="max-width:70ch;margin:8px 0 0">This is an illustrative fragment in the style of a steady incompressible case, not a recommended setup. Check the dictionaries of the tutorial that matches your solver.</div>
+  <div class="deeper"><h4>Go deeper</h4><ul>
+    <li><a href="https://doc.openfoam.com/2606/fundamentals/case-structure/fvschemes" target="_blank" rel="noopener">fvSchemes</a> · <a href="https://doc.openfoam.com/2606/fundamentals/case-structure/fvsolution" target="_blank" rel="noopener">fvSolution</a></li>
+  </ul></div>
+</section>
+</main>
+<footer class="wrap">
+  <h3>Books and references</h3>
+  <ul>
+    <li>F. Moukalled, L. Mangani, M. Darwish, <i>The Finite Volume Method in Computational Fluid Dynamics: An Advanced Introduction with OpenFOAM and Matlab</i>, Springer</li>
+    <li>S. V. Patankar, <i>Numerical Heat Transfer and Fluid Flow</i></li>
+    <li>H. K. Versteeg, W. Malalasekera, <i>An Introduction to Computational Fluid Dynamics: The Finite Volume Method</i></li>
+    <li>J. H. Ferziger, M. Perić, <i>Computational Methods for Fluid Dynamics</i></li>
+    <li>H. Jasak, <i>Error Analysis and Estimation for the Finite Volume Method with Applications to Fluid Flows</i>, PhD thesis, Imperial College, 1996</li>
+  </ul>
+  <p>This page simplifies on purpose. The numerical demos are minimal re-implementations for teaching, not OpenFOAM output.</p>
+</footer>
+<div id="pop" role="dialog" aria-live="polite" hidden></div>
+<script src="js/numerics.js"></script>
+<script src="js/glossary.js"></script>
+<script src="js/core.js"></script>
+<script src="js/ch2-ch3-figures.js"></script>
+<script src="js/ch4-solvers.js"></script>
+<script src="js/sketches.js"></script>
+<script src="js/main.js"></script>
+</body></html>
